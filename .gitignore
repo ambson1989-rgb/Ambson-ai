@@ -1,0 +1,4 @@
+.env
+renders/
+__pycache__/
+*.pyc
