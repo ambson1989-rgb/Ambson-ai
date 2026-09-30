@@ -20,18 +20,20 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      # Static build is much faster than apt-get on cold runners (~seconds vs minutes)
+      # BtbN gpl build includes libfreetype (needed for drawtext captions).
+      # johnvansickle static builds often lack drawtext → ffmpeg exit 8.
       - name: Install ffmpeg
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/ffmpeg.tar.xz \
-            https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
           tar -xJf /tmp/ffmpeg.tar.xz -C /tmp
-          FFMPEG_DIR=$(echo /tmp/ffmpeg-*-amd64-static)
-          sudo cp "$FFMPEG_DIR/ffmpeg" /usr/local/bin/ffmpeg
-          sudo cp "$FFMPEG_DIR/ffprobe" /usr/local/bin/ffprobe
+          FFMPEG_DIR=$(echo /tmp/ffmpeg-*-linux64-gpl)
+          sudo cp "$FFMPEG_DIR/bin/ffmpeg" /usr/local/bin/ffmpeg
+          sudo cp "$FFMPEG_DIR/bin/ffprobe" /usr/local/bin/ffprobe
           sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
           ffmpeg -version | head -1
+          ffmpeg -filters 2>/dev/null | grep -q drawtext && echo "drawtext: OK"
 
       - run: pip install -r requirements.txt
 
