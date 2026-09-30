@@ -6,143 +6,130 @@ Instagram account, using AI-generated video.
 ## How it fits together
 
 ```
-script_bank.py        -> today's fact-checked script (narration + image prompt per beat)
-image_gen.py           -> free stills via Pollinations.ai
+script_bank.py          -> today's fact-checked script (narration + image prompt per beat)
+image_gen.py            -> free stills via Pollinations.ai
 voice_gen.py            -> free narration via edge-tts
-video_assemble.py        -> ffmpeg: Ken Burns zoom + captions + concat -> final .mp4
-safety_gate.py           -> automated pre-publish check (stands in for human review)
-instagram_client.py      -> publishes to Instagram, manages comments
-pipeline.py                -> runs the above end to end, once a day
+video_assemble.py       -> ffmpeg: Ken Burns zoom + captions + concat -> final .mp4
+safety_gate.py          -> automated pre-publish check (Gemini)
+media_host.py           -> upload final .mp4 to R2/S3/B2 -> public HTTPS URL
+instagram_client.py     -> publishes to Instagram, manages comments
+pipeline.py             -> runs the above end to end, once a day
+token_refresh.py        -> refreshes the 60-day Instagram token (weekly)
 comment_bot.py +
-run_comment_bot.py         -> replies to new comments, on its own schedule
+run_comment_bot.py      -> replies to new comments, on its own schedule
 ```
 
-## Setup
+## What's implemented
 
-1. **Instagram account**: Settings → Account type and tools → Switch to
-   professional account → Creator.
-2. **Meta Developer App**: developers.facebook.com → My Apps → Create App
-   (type: Business) → add the **Instagram** product, configured for
-   **Instagram API with Instagram Login** (no Facebook Page required).
-3. Request permissions: `instagram_business_basic`,
-   `instagram_business_content_publish`, `instagram_business_manage_comments`.
-4. Run the Business Login for Instagram OAuth flow once to get your
-   `IG_USER_ID` and a long-lived access token. **This token expires
-   (~60 days)** — you'll need a refresh step before it does, or the
-   pipeline will start failing silently. Not yet implemented here.
-5. Copy `.env.example` to `.env` and fill in the values.
-6. `pip install -r requirements.txt`
+| Piece | Status |
+|-------|--------|
+| Script bank (15 topics) | Ready |
+| Image gen (Pollinations) | Ready |
+| Voice gen (edge-tts) | Ready |
+| Video assemble (ffmpeg) | Ready |
+| Safety gate (Gemini) | Ready |
+| Public upload (R2/S3/B2) | Ready |
+| Instagram publish + comments | Ready (untested live) |
+| Token refresh | Ready |
+| GitHub Actions schedules | Ready |
+| Optional Discord/Slack alerts | Ready |
 
-## What's real vs. stubbed
+## Go-live checklist
 
-- **Instagram publishing and comment replies**: written to the current
-  documented API, but untested against a live account (no network path to
-  Meta's API from where this was built) — sanity-check against
-  developers.facebook.com/docs/instagram-platform before trusting it fully.
-- **Script content**: there's no free real-time "what's trending on
-  Instagram" API, so `script_bank.py` ships with three fact-checked scripts
-  (Antikythera mechanism, Tesla's Wardenclyffe Tower, the CMB discovery),
-  each already broken into narration + image-prompt beats. Ask for a refill
-  in chat once you're through these — new batches get the same fact-check
-  pass these did.
-- **Images and narration**: `image_gen.py` (Pollinations.ai) and
-  `voice_gen.py` (edge-tts) are both real, working, free, keyless APIs —
-  not stubs. Pollinations' anonymous tier is rate-limited and not as
-  consistent as a paid service; if a fetch fails, it retries once before
-  giving up.
-- **Video assembly**: `video_assemble.py`'s ffmpeg pipeline (Ken Burns
-  zoom, caption burn-in, per-beat audio mux, concat) was built and verified
-  against placeholder inputs — resolution, duration, and caption rendering
-  all confirmed working. The real images/audio that feed it are a separate,
-  untested-live network dependency (see above).
-- **Public hosting for rendered clips**: `pipeline.py`'s
-  `upload_to_public_host()` is an unimplemented stub — Instagram's publish
-  API needs the video at a public URL, so you need somewhere to put
-  rendered files (S3, Cloudflare R2, etc.) before publish.
+### 1. Instagram + Meta app
+1. Switch the Instagram account to **Professional → Creator**.
+2. At [developers.facebook.com](https://developers.facebook.com) create an app (type: Business).
+3. Add the **Instagram** product configured for **Instagram API with Instagram Login**.
+4. Request permissions: `instagram_business_basic`, `instagram_business_content_publish`, `instagram_business_manage_comments`.
+5. Complete Business Login for Instagram once → get `IG_USER_ID` and a **long-lived** access token.
 
-## Running it — GitHub Actions (no server, no phone left running)
+### 2. Public video hosting (Cloudflare R2 recommended)
+Instagram needs a public HTTPS URL for the video.
 
-The two workflow files in `.github/workflows/` run this on GitHub's own
-servers on a schedule. Nothing has to stay open on your end — not a VPS,
-not your phone. Entire setup can be done from a phone browser:
+**Cloudflare R2 (free egress):**
+1. Create an R2 bucket (e.g. `ambson-reels`).
+2. Enable **public access** on the bucket (R2 → bucket → Settings → Public access) **or** attach a custom domain.
+3. Create an R2 API token with Object Read & Write.
+4. Note:
+   - Account ID
+   - Access Key ID
+   - Secret Access Key
+   - Public base URL (e.g. `https://pub-xxxxx.r2.dev` or your custom domain)
+   - Endpoint: `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`
 
-1. Create a repo on github.com (Safari/Chrome, no app needed) — **public**
-   is the easy default, since Actions minutes are unlimited and free on
-   public repos. Private repos get a monthly free-minutes allowance before
-   metered billing kicks in, which the comment-bot's 30-min polling can
-   realistically bump into. Nothing secret lives in the code either way —
-   API keys go in encrypted repo Secrets, never in a committed file — so
-   public is fine unless you'd rather the topic queue/scripts themselves
-   be private.
-2. **Add file → Upload files** → select every file in this project at once
-   from your Files app (multi-select works in the iOS picker) → commit.
-3. For the workflow files specifically, make sure they land at
-   `.github/workflows/daily-post.yml` and `.github/workflows/comment-bot.yml`
-   — typing that full path in "Create new file" auto-creates the folders.
-4. **Settings → Secrets and variables → Actions → New repository secret**
-   — add `IG_USER_ID`, `IG_ACCESS_TOKEN`, `GEMINI_API_KEY`,
-   `PUBLIC_MEDIA_BASE_URL`, `AFFILIATE_LINK` — same values as your `.env`,
-   just entered one at a time in the browser. Images and narration
-   (Pollinations.ai, edge-tts) need no key at all.
-5. That's it — check the **Actions** tab to watch runs, or hit
-   **Run workflow** there to trigger one by hand instead of waiting for the
-   schedule.
+### 3. Gemini API key
+Get a key from [Google AI Studio](https://aistudio.google.com/apikey) (free tier is enough for one safety check + comment replies per day).
 
-Both workflows commit their own state file (`script_state.json`,
-`replied_comments.json`) back to the repo after every run — necessary
-because GitHub Actions throws away the runner's disk after each run, so
-state wouldn't survive otherwise. As a side effect, those commits count as
-repo activity, which stops GitHub's automatic 60-day disable of idle
-scheduled workflows.
+### 4. GitHub repo secrets
+**Settings → Secrets and variables → Actions → New repository secret** — add all of these:
 
-Edit the cron lines in the two workflow files to change timing. GitHub
-only guarantees "best effort" on schedule timing — a few minutes of drift
-under load is normal and fine here.
+| Secret | Required |
+|--------|----------|
+| `IG_USER_ID` | Yes |
+| `IG_ACCESS_TOKEN` | Yes |
+| `GEMINI_API_KEY` | Yes |
+| `PUBLIC_MEDIA_BUCKET` | Yes |
+| `PUBLIC_MEDIA_ACCESS_KEY` | Yes |
+| `PUBLIC_MEDIA_SECRET_KEY` | Yes |
+| `PUBLIC_MEDIA_BASE_URL` | Yes |
+| `PUBLIC_MEDIA_ENDPOINT` | Yes (R2/B2) |
+| `PUBLIC_MEDIA_REGION` | Optional (`auto` for R2) |
+| `PUBLIC_MEDIA_PREFIX` | Optional (`reels/`) |
+| `AFFILIATE_LINK` | Optional |
+| `NOTIFY_WEBHOOK_URL` | Optional (Discord/Slack) |
+| `GH_PAT` | Optional — classic PAT with `repo` so token refresh can update `IG_ACCESS_TOKEN` automatically |
 
-### Alternative: your own server
+### 5. First test run
+1. Open **Actions → Daily reel post → Run workflow**.
+2. Watch the logs. On success you get a published Reel + optional webhook notification.
+3. If publish fails, check: public URL is reachable in a browser, Instagram token scopes, and container status in the logs.
 
-If you'd rather not depend on GitHub Actions, the same `pipeline.py` /
-`run_comment_bot.py` run fine under plain cron on any always-on Linux box
-(a small VPS):
+### 6. Keep the token alive
+The workflow **Refresh Instagram token** runs every Monday.  
+- With `GH_PAT` set: it writes the new token back into `IG_ACCESS_TOKEN` automatically.  
+- Without it: open the workflow log, copy the printed token, and paste it into Secrets.
 
-```
-0 15 * * * cd /path/to/reels-agent && python pipeline.py >> pipeline.log 2>&1
-*/20 * * * * cd /path/to/reels-agent && python run_comment_bot.py >> comments.log 2>&1
+## Local run (optional)
+
+```bash
+cp env.example .env   # fill in values
+pip install -r requirements.txt
+# ffmpeg must be installed on the machine
+python pipeline.py
+python run_comment_bot.py
+python token_refresh.py
 ```
 
-## On "no human review"
+## Scheduling
 
-The one safeguard kept in despite that: `safety_gate.py` runs every caption
-+ narration script through Gemini before publish and blocks anything that
-looks like a copyright risk, an unverified factual claim, or a policy
-problem. It fails closed — if the check itself errors, the post doesn't go
-out. This isn't a human, so it won't catch everything a person would, but
-it's a real backstop for a zero-oversight pipeline posting daily.
+| Workflow | Schedule | Purpose |
+|----------|----------|---------|
+| `daily-post.yml` | 09:30 UTC daily | Generate + publish one Reel |
+| `comment-bot.yml` | every 30 min | Reply to new comments |
+| `token-refresh.yml` | Monday 08:00 UTC | Refresh Instagram token |
 
-Every post is also tagged `is_ai_generated=true` at publish time, which
-applies Instagram's own AI-content label automatically — the platform's own
-compliant way of handling AI-content disclosure, no manual captioning needed.
+Edit the cron lines to change timing. GitHub schedule delivery is best-effort (a few minutes of drift is normal).
 
-## Monetization — realistic paths, roughly easiest first
+Both the daily post and comment bot commit their state files (`script_state.json`, `replied_comments.json`) back to the repo so state survives between runs and scheduled workflows stay active.
 
-1. **Affiliate/commission links** in bio — no follower minimum, works from post one.
-2. **Instagram Gifts** — needs 500+ followers.
-3. **In-stream ads / Subscriptions** — needs an established, consistent,
-   original-content account (rough threshold ~5,000+ followers, varies by
-   region); payouts for mid-sized accounts are often modest.
-4. **Invite-only bonus programs** — roll out slowly, not available
-   everywhere, eligibility criteria set by Meta and change often.
-5. **Brand sponsorships** — come once you have a real audience.
+## Monetization (realistic order)
 
-Note: Meta's Partner Monetization Policies require *original* content —
-reposted/repurposed clips are explicitly excluded from monetization and
-risk copyright takedowns. Since this pipeline generates original AI video,
-you're on the right side of that requirement.
+1. **Affiliate / link-in-bio** — works from day one (`AFFILIATE_LINK` in caption CTA).
+2. **Instagram Gifts** — ~500+ followers.
+3. **In-stream ads / Subscriptions** — usually needs consistent original content and a real audience (often ~5k+).
+4. **Brand deals** — after you have niche engagement.
 
-## Not yet built
+Meta’s Partner Monetization policies require original content. This pipeline generates original AI video and tags posts with `is_ai_generated=true`.
 
-- Token refresh automation
-- The Facebook side (needs a linked Page + the Facebook-Login API variant)
-- Any real analytics/revenue tracking beyond what Instagram Insights gives you
-- Word-synced ("karaoke-style") captions — current captions are one static
-  line per beat, not timed to individual words
+Growth still depends on hooks, niche consistency, and watch time — automation alone does not guarantee revenue.
+
+## Safety
+
+`safety_gate.py` runs every caption + narration through Gemini before publish and **fails closed** (if the check errors, the post does not go out). Posts are tagged AI-generated at publish time.
+
+## Not yet built / known limits
+
+- Word-synced (“karaoke”) captions — current captions are one static line per beat
+- Live analytics dashboard (use Instagram Insights)
+- Automatic script generation beyond the 15-topic bank (ask for a refill when you cycle through)
+- Facebook Page–linked API path (this project uses Instagram Login only)
