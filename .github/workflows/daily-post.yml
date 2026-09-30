@@ -3,10 +3,10 @@ name: Daily reel post
 on:
   schedule:
     - cron: "30 9 * * *"   # 9:30 UTC daily — edit to your preferred posting time
-  workflow_dispatch: {}     # adds a "Run workflow" button in the Actions tab, for manual testing
+  workflow_dispatch: {}     # "Run workflow" button for manual tests
 
 permissions:
-  contents: write            # needed so the job can commit updated state back to the repo
+  contents: write
 
 jobs:
   post:
@@ -29,14 +29,18 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PUBLIC_MEDIA_BUCKET: ${{ secrets.PUBLIC_MEDIA_BUCKET }}
+          PUBLIC_MEDIA_ACCESS_KEY: ${{ secrets.PUBLIC_MEDIA_ACCESS_KEY }}
+          PUBLIC_MEDIA_SECRET_KEY: ${{ secrets.PUBLIC_MEDIA_SECRET_KEY }}
           PUBLIC_MEDIA_BASE_URL: ${{ secrets.PUBLIC_MEDIA_BASE_URL }}
+          PUBLIC_MEDIA_ENDPOINT: ${{ secrets.PUBLIC_MEDIA_ENDPOINT }}
+          PUBLIC_MEDIA_REGION: ${{ secrets.PUBLIC_MEDIA_REGION }}
+          PUBLIC_MEDIA_PREFIX: ${{ secrets.PUBLIC_MEDIA_PREFIX }}
           AFFILIATE_LINK: ${{ secrets.AFFILIATE_LINK }}
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+          CLEANUP_RENDERS: "1"
         run: python pipeline.py
 
-      # Runners are thrown away after every run, so script_state.json has to be
-      # committed back or the script rotation resets on every post. This commit
-      # also counts as repo activity, which keeps GitHub from auto-disabling
-      # the schedule after 60 days of no activity.
       - name: Persist script rotation state
         run: |
           git config user.name "reels-agent-bot"

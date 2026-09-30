@@ -2,7 +2,7 @@ name: Reply to comments
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # every 30 minutes — see README for the minutes-budget tradeoff
+    - cron: "*/30 * * * *"   # every 30 minutes
   workflow_dispatch: {}
 
 permissions:

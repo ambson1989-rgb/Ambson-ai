@@ -1,0 +1,26 @@
+name: Refresh Instagram token
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # every Monday 08:00 UTC — keeps the 60-day token alive
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - run: pip install -r requirements.txt
+
+      - name: Refresh long-lived token
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python token_refresh.py
