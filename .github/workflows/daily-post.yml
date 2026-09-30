@@ -1,11 +1,10 @@
 name: Daily reel post
 
-# SCHEDULES DISABLED until backend (media host + secrets) is fully set.
-# Re-enable the cron block below when ready to go live.
+# SCHEDULES DISABLED until backend is fully set and a manual run succeeds.
 on:
   # schedule:
-  #   - cron: "30 9 * * *"   # 9:30 UTC daily
-  workflow_dispatch: {}     # manual "Run workflow" only for now
+  #   - cron: "30 9 * * *"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -31,6 +30,8 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+          POLLINATIONS_MODEL: ${{ secrets.POLLINATIONS_MODEL }}
           PUBLIC_MEDIA_BUCKET: ${{ secrets.PUBLIC_MEDIA_BUCKET }}
           PUBLIC_MEDIA_ACCESS_KEY: ${{ secrets.PUBLIC_MEDIA_ACCESS_KEY }}
           PUBLIC_MEDIA_SECRET_KEY: ${{ secrets.PUBLIC_MEDIA_SECRET_KEY }}
