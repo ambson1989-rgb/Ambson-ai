@@ -1,6 +1,6 @@
 name: Daily reel post
 
-# SCHEDULES DISABLED until backend is fully set and a manual run succeeds.
+# SCHEDULES DISABLED until a full publish succeeds on latest main.
 on:
   # schedule:
   #   - cron: "30 9 * * *"
@@ -20,8 +20,18 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      # Static build is much faster than apt-get on cold runners (~seconds vs minutes)
       - name: Install ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/ffmpeg.tar.xz \
+            https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          tar -xJf /tmp/ffmpeg.tar.xz -C /tmp
+          FFMPEG_DIR=$(echo /tmp/ffmpeg-*-amd64-static)
+          sudo cp "$FFMPEG_DIR/ffmpeg" /usr/local/bin/ffmpeg
+          sudo cp "$FFMPEG_DIR/ffprobe" /usr/local/bin/ffprobe
+          sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+          ffmpeg -version | head -1
 
       - run: pip install -r requirements.txt
 
@@ -45,9 +55,16 @@ jobs:
         run: python pipeline.py
 
       - name: Persist script rotation state
+        if: always()
         run: |
           git config user.name "reels-agent-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add script_state.json
-          git diff --cached --quiet || git commit -m "chore: update script rotation state"
-          git push
+          git pull --rebase origin main || true
+          git add script_state.json || true
+          if git diff --cached --quiet; then
+            echo "No state change to commit"
+          else
+            git commit -m "chore: update script rotation state"
+            git pull --rebase origin main
+            git push
+          fi
