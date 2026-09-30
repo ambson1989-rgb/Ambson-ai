@@ -7,10 +7,8 @@ This does not replace judgment -- it catches the obvious failure modes
 (copyright risk, factual overreach, policy-violating content) automatically
 so a bad generation doesn't go live untouched.
 
-Uses Gemini's free tier (gemini-2.5-flash) rather than a paid API -- fine for
-this volume (one check a day), but worth knowing: free-tier prompts/outputs
-may be used by Google to improve their products, unlike the paid tier. Low
-stakes for a caption + video description, but worth knowing.
+Uses Gemini's free tier rather than a paid API -- fine for this volume
+(one check a day).
 """
 
 import json
@@ -19,6 +17,9 @@ from google import genai
 from google.genai import types
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+# gemini-2.5-flash was retired for new users; use current free flash model.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
 SYSTEM_PROMPT = """You are a pre-publish safety check for an Instagram account that \
 posts short-form video daily. You will be given a caption and a description of a \
@@ -38,7 +39,7 @@ Respond with ONLY a JSON object: {"safe": true or false, "reason": "one sentence
 
 def check_content_safe(caption: str, video_description: str) -> tuple[bool, str]:
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_MODEL,
         contents=f"Caption: {caption}\n\nVideo description: {video_description}",
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
@@ -46,6 +47,11 @@ def check_content_safe(caption: str, video_description: str) -> tuple[bool, str]
         ),
     )
     text = (response.text or "").strip()
+    # Strip markdown code fences if the model wraps JSON
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:].strip()
     try:
         result = json.loads(text)
         return bool(result["safe"]), result.get("reason", "")

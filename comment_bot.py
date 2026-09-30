@@ -21,6 +21,8 @@ from instagram_client import get_recent_comments, reply_to_comment
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 STATE_FILE = os.path.join(os.path.dirname(__file__), "replied_comments.json")
 
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+
 SYSTEM_PROMPT = """You reply to Instagram comments on behalf of a personal content \
 account. Every reply must be either genuinely grateful/kind, or purely informational \
 and factual. Never sarcastic, never dismissive, never argumentative, never abusive.
@@ -52,7 +54,7 @@ def _save_replied_ids(ids: set) -> None:
 
 def generate_reply(comment_text: str) -> str:
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_MODEL,
         contents=f"Comment: {comment_text}",
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
