@@ -7,6 +7,7 @@ is the automated safety_gate check.
 import logging
 import os
 import shutil
+import sys
 import uuid
 
 from script_bank import pick_script
@@ -35,7 +36,6 @@ def build_caption(topic: str) -> str:
 
 
 def notify(message: str) -> None:
-    """Optional Discord/Slack webhook for success or failure alerts."""
     url = os.environ.get("NOTIFY_WEBHOOK_URL", "").strip()
     if not url:
         return
@@ -78,11 +78,12 @@ def run_once() -> None:
         caption = build_caption(script["topic"])
         safe, reason = check_content_safe(caption, " ".join(full_narration))
         if not safe:
-            log.warning("Safety gate blocked this post: %s", reason)
+            log.error("Safety gate blocked this post: %s", reason)
             notify(f"⚠️ Safety gate blocked post: {script['topic']}\nReason: {reason}")
-            return
+            sys.exit(2)  # red job = not published
 
         video_url = upload_to_public_host(final_path)
+        log.info("Uploaded: %s", video_url)
         media_id = publish_reel(video_url, caption, is_ai_generated=True)
 
         if media_id:
@@ -91,12 +92,12 @@ def run_once() -> None:
         else:
             log.error("Publish failed (container never reached FINISHED).")
             notify(f"❌ Publish failed for: {script['topic']}")
+            sys.exit(3)
     except Exception as e:
         log.exception("Pipeline failed")
         notify(f"❌ Pipeline error: {e}")
         raise
     finally:
-        # Keep disk usage low on ephemeral runners
         if os.environ.get("CLEANUP_RENDERS", "1") == "1":
             shutil.rmtree(run_dir, ignore_errors=True)
 
