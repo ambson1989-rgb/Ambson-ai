@@ -19,6 +19,9 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - run: pip install -r requirements.txt
 
       - name: Run pipeline
@@ -26,21 +29,18 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          VIDEO_GEN_PROVIDER: replicate
-          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
-          REPLICATE_MODEL_VERSION: ${{ secrets.REPLICATE_MODEL_VERSION }}
           PUBLIC_MEDIA_BASE_URL: ${{ secrets.PUBLIC_MEDIA_BASE_URL }}
           AFFILIATE_LINK: ${{ secrets.AFFILIATE_LINK }}
         run: python pipeline.py
 
-      # Runners are thrown away after every run, so trend_state.json has to be
-      # committed back or the topic rotation resets on every post. This commit
+      # Runners are thrown away after every run, so script_state.json has to be
+      # committed back or the script rotation resets on every post. This commit
       # also counts as repo activity, which keeps GitHub from auto-disabling
       # the schedule after 60 days of no activity.
-      - name: Persist topic rotation state
+      - name: Persist script rotation state
         run: |
           git config user.name "reels-agent-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add trend_state.json
-          git diff --cached --quiet || git commit -m "chore: update topic rotation state"
+          git add script_state.json
+          git diff --cached --quiet || git commit -m "chore: update script rotation state"
           git push

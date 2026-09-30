@@ -6,13 +6,15 @@ Instagram account, using AI-generated video.
 ## How it fits together
 
 ```
-trend_research.py   -> today's topic
-video_gen.py         -> renders a video for that topic (pluggable provider)
-safety_gate.py       -> automated pre-publish check (stands in for human review)
-instagram_client.py  -> publishes to Instagram, manages comments
-pipeline.py           -> runs the above end to end, once a day
+script_bank.py        -> today's fact-checked script (narration + image prompt per beat)
+image_gen.py           -> free stills via Pollinations.ai
+voice_gen.py            -> free narration via edge-tts
+video_assemble.py        -> ffmpeg: Ken Burns zoom + captions + concat -> final .mp4
+safety_gate.py           -> automated pre-publish check (stands in for human review)
+instagram_client.py      -> publishes to Instagram, manages comments
+pipeline.py                -> runs the above end to end, once a day
 comment_bot.py +
-run_comment_bot.py    -> replies to new comments, on its own schedule
+run_comment_bot.py         -> replies to new comments, on its own schedule
 ```
 
 ## Setup
@@ -37,16 +39,22 @@ run_comment_bot.py    -> replies to new comments, on its own schedule
   documented API, but untested against a live account (no network path to
   Meta's API from where this was built) — sanity-check against
   developers.facebook.com/docs/instagram-platform before trusting it fully.
-- **Trend research**: honestly, there's no free real-time "what's trending
-  on Instagram" API. `trend_research.py` ships with a manually-curated
-  rotating topic queue — *edit `TOPIC_QUEUE` to your actual niche*. See the
-  docstring in that file for how to upgrade to real trend signal later
-  (Instagram's `ig_audio` endpoint, which requires the Facebook-Login-based
-  API + a linked Page).
-- **Video generation**: `video_gen.py` has one working example backend
-  (Replicate) as a placeholder. Swap in whichever provider you actually
-  want to use — the rest of the pipeline only cares that it gets back an
-  .mp4 file.
+- **Script content**: there's no free real-time "what's trending on
+  Instagram" API, so `script_bank.py` ships with three fact-checked scripts
+  (Antikythera mechanism, Tesla's Wardenclyffe Tower, the CMB discovery),
+  each already broken into narration + image-prompt beats. Ask for a refill
+  in chat once you're through these — new batches get the same fact-check
+  pass these did.
+- **Images and narration**: `image_gen.py` (Pollinations.ai) and
+  `voice_gen.py` (edge-tts) are both real, working, free, keyless APIs —
+  not stubs. Pollinations' anonymous tier is rate-limited and not as
+  consistent as a paid service; if a fetch fails, it retries once before
+  giving up.
+- **Video assembly**: `video_assemble.py`'s ffmpeg pipeline (Ken Burns
+  zoom, caption burn-in, per-beat audio mux, concat) was built and verified
+  against placeholder inputs — resolution, duration, and caption rendering
+  all confirmed working. The real images/audio that feed it are a separate,
+  untested-live network dependency (see above).
 - **Public hosting for rendered clips**: `pipeline.py`'s
   `upload_to_public_host()` is an unimplemented stub — Instagram's publish
   API needs the video at a public URL, so you need somewhere to put
@@ -72,15 +80,15 @@ not your phone. Entire setup can be done from a phone browser:
    `.github/workflows/daily-post.yml` and `.github/workflows/comment-bot.yml`
    — typing that full path in "Create new file" auto-creates the folders.
 4. **Settings → Secrets and variables → Actions → New repository secret**
-   — add `IG_USER_ID`, `IG_ACCESS_TOKEN`, `ANTHROPIC_API_KEY`,
-   `REPLICATE_API_TOKEN`, `REPLICATE_MODEL_VERSION`, `PUBLIC_MEDIA_BASE_URL`,
-   `AFFILIATE_LINK` — same values as your `.env`, just entered one at a time
-   in the browser.
+   — add `IG_USER_ID`, `IG_ACCESS_TOKEN`, `GEMINI_API_KEY`,
+   `PUBLIC_MEDIA_BASE_URL`, `AFFILIATE_LINK` — same values as your `.env`,
+   just entered one at a time in the browser. Images and narration
+   (Pollinations.ai, edge-tts) need no key at all.
 5. That's it — check the **Actions** tab to watch runs, or hit
    **Run workflow** there to trigger one by hand instead of waiting for the
    schedule.
 
-Both workflows commit their own state file (`trend_state.json`,
+Both workflows commit their own state file (`script_state.json`,
 `replied_comments.json`) back to the repo after every run — necessary
 because GitHub Actions throws away the runner's disk after each run, so
 state wouldn't survive otherwise. As a side effect, those commits count as
@@ -105,7 +113,7 @@ If you'd rather not depend on GitHub Actions, the same `pipeline.py` /
 ## On "no human review"
 
 The one safeguard kept in despite that: `safety_gate.py` runs every caption
-+ video description through Claude before publish and blocks anything that
++ narration script through Gemini before publish and blocks anything that
 looks like a copyright risk, an unverified factual claim, or a policy
 problem. It fails closed — if the check itself errors, the post doesn't go
 out. This isn't a human, so it won't catch everything a person would, but
@@ -136,4 +144,5 @@ you're on the right side of that requirement.
 - Token refresh automation
 - The Facebook side (needs a linked Page + the Facebook-Login API variant)
 - Any real analytics/revenue tracking beyond what Instagram Insights gives you
-- Captioning/subtitle burn-in for the generated video
+- Word-synced ("karaoke-style") captions — current captions are one static
+  line per beat, not timed to individual words
