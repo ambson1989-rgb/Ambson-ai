@@ -1,9 +1,11 @@
 name: Daily reel post
 
+# SCHEDULES DISABLED until backend (media host + secrets) is fully set.
+# Re-enable the cron block below when ready to go live.
 on:
-  schedule:
-    - cron: "30 9 * * *"   # 9:30 UTC daily — edit to your preferred posting time
-  workflow_dispatch: {}     # "Run workflow" button for manual tests
+  # schedule:
+  #   - cron: "30 9 * * *"   # 9:30 UTC daily
+  workflow_dispatch: {}     # manual "Run workflow" only for now
 
 permissions:
   contents: write

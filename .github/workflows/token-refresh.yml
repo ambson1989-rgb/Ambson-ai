@@ -1,8 +1,9 @@
 name: Refresh Instagram token
 
+# SCHEDULES DISABLED until backend is fully set.
 on:
-  schedule:
-    - cron: "0 8 * * 1"   # every Monday 08:00 UTC — keeps the 60-day token alive
+  # schedule:
+  #   - cron: "0 8 * * 1"
   workflow_dispatch: {}
 
 jobs:

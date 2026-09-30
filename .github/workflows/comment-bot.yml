@@ -1,8 +1,9 @@
 name: Reply to comments
 
+# SCHEDULES DISABLED until backend is fully set.
 on:
-  schedule:
-    - cron: "*/30 * * * *"   # every 30 minutes
+  # schedule:
+  #   - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
 permissions:
