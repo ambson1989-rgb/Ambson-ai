@@ -1,0 +1,21 @@
+{
+  "topic": "Roman concrete — why some ancient harbors still stand",
+  "beats": [
+    {
+      "narration": "Some Roman harbors have survived 2,000 years in seawater.",
+      "image_prompt": "ancient Roman concrete pier extending into blue Mediterranean water, weathered but intact, sunny day, no people"
+    },
+    {
+      "narration": "Romans mixed lime and volcanic ash. Seawater triggered a chemical reaction that strengthened the material over time.",
+      "image_prompt": "close-up of porous ancient concrete with crystals, scientific macro photography, textured surface, no people"
+    },
+    {
+      "narration": "Modern concrete often crumbles in decades under the same conditions.",
+      "image_prompt": "cracked modern concrete seawall versus intact ancient stone structure nearby, contrast composition, no people"
+    },
+    {
+      "narration": "Researchers are still studying Roman recipes to improve today's materials.",
+      "image_prompt": "archaeological ruins of a Roman port at sunset, golden light on stone, calm sea, cinematic, no people"
+    }
+  ]
+}

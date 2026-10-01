@@ -1,0 +1,21 @@
+{
+  "topic": "The Tunguska event — the day the sky exploded over Siberia",
+  "beats": [
+    {
+      "narration": "In 1908, something exploded over Siberia with the force of a large nuclear bomb.",
+      "image_prompt": "vast Siberian taiga forest at dawn, flattened trees in a radial pattern, cinematic aerial view, no people"
+    },
+    {
+      "narration": "Trees were flattened across roughly 2,000 square kilometers. No impact crater was found.",
+      "image_prompt": "endless flattened forest from above, scorched and broken trunks, moody documentary lighting, no people"
+    },
+    {
+      "narration": "The leading explanation is an airburst from a stony asteroid or comet fragment that never hit the ground intact.",
+      "image_prompt": "bright fireball streaking through the upper atmosphere over a dark forest, dramatic sky, cinematic, no people"
+    },
+    {
+      "narration": "Had it happened over a city, the death toll would have been catastrophic.",
+      "image_prompt": "empty snowy Siberian landscape under a strange glowing sky, ominous and quiet, wide cinematic shot, no people"
+    }
+  ]
+}

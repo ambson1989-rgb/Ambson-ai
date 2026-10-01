@@ -1,0 +1,21 @@
+{
+  "topic": "Pulsars — the cosmic lighthouses that almost weren't believed",
+  "beats": [
+    {
+      "narration": "In 1967, a graduate student found a signal that pulsed every 1.3 seconds.",
+      "image_prompt": "1960s radio telescope array under a clear night sky, documentary style, dramatic lighting, no people"
+    },
+    {
+      "narration": "Jocelyn Bell Burnell and her advisor first joked it might be little green men — then ruled that out.",
+      "image_prompt": "vintage radio astronomy chart with regular pulse spikes on paper, scientific instrument aesthetic, no people"
+    },
+    {
+      "narration": "It was a pulsar: a rapidly spinning neutron star sweeping a beam of radio waves past Earth.",
+      "image_prompt": "artist concept of a neutron star pulsar emitting twin beams of radiation in deep space, cinematic, no people"
+    },
+    {
+      "narration": "The 1974 Nobel Prize went to her supervisor. Bell Burnell was left off the prize — a decision still widely criticized.",
+      "image_prompt": "deep space nebula with a bright pulsing stellar object, epic cosmic wide shot, no people"
+    }
+  ]
+}

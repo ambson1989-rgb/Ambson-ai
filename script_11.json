@@ -1,0 +1,21 @@
+{
+  "topic": "The Pioneer anomaly — when spacecraft drifted off course",
+  "beats": [
+    {
+      "narration": "Pioneer 10 and 11 drifted slightly off their predicted paths.",
+      "image_prompt": "vintage 1970s spacecraft in deep space, golden antenna dish, stars in background, cinematic, no people"
+    },
+    {
+      "narration": "For years, physicists wondered if new physics was needed to explain the tiny extra acceleration toward the Sun.",
+      "image_prompt": "scientific equation sketches and spacecraft trajectory plots on paper, dramatic desk lighting, no people"
+    },
+    {
+      "narration": "The leading explanation today is heat recoiling unevenly from the spacecraft itself — not new gravity.",
+      "image_prompt": "spacecraft thermal radiation visualization in deep space, subtle glow, technical cutaway style, no people"
+    },
+    {
+      "narration": "A mystery that looked revolutionary was solved by careful engineering physics.",
+      "image_prompt": "distant probe leaving the solar system, pale sunlight, vast empty space, contemplative wide shot, no people"
+    }
+  ]
+}

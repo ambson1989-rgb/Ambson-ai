@@ -1,0 +1,21 @@
+{
+  "topic": "Greek fire — the medieval superweapon that burned on water",
+  "beats": [
+    {
+      "narration": "Medieval Byzantium had a weapon that burned even on water.",
+      "image_prompt": "Byzantine warship on dark sea with jets of flame, dramatic night battle atmosphere, cinematic, no people"
+    },
+    {
+      "narration": "Greek fire was projected through siphons onto enemy ships. Water did not extinguish it.",
+      "image_prompt": "close-up of ancient bronze flame siphon nozzle with fire, dramatic sparks, dark background, no people"
+    },
+    {
+      "narration": "Its exact recipe was a state secret. It was lost when the empire declined.",
+      "image_prompt": "ancient sealed scrolls and laboratory vessels on a stone table, candlelight, mysterious mood, no people"
+    },
+    {
+      "narration": "Historians still debate the formula — petroleum, resin, and quicklime are common guesses.",
+      "image_prompt": "burning oil on dark water surface at night, intense flames reflected, cinematic, no people"
+    }
+  ]
+}

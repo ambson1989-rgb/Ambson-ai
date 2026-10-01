@@ -1,0 +1,21 @@
+{
+  "topic": "The sabre-toothed black hole at the center of the Milky Way",
+  "beats": [
+    {
+      "narration": "At the center of our galaxy sits a black hole four million times the mass of the Sun.",
+      "image_prompt": "artist concept of Sagittarius A black hole with glowing accretion disk, stars orbiting, deep space cinematic, no people"
+    },
+    {
+      "narration": "Astronomers tracked stars whipping around an invisible point at enormous speeds.",
+      "image_prompt": "star trails orbiting a dark central void in the galactic center, scientific visualization style, no people"
+    },
+    {
+      "narration": "In 2022, the Event Horizon Telescope released an image of its shadow — a dark silhouette ringed by glowing gas.",
+      "image_prompt": "black hole shadow with orange photon ring, Event Horizon Telescope style image, cosmic background, no people"
+    },
+    {
+      "narration": "You cannot see it with your eyes — but its gravity shapes the heart of the Milky Way.",
+      "image_prompt": "Milky Way galactic center dense star field, dramatic dust lanes, epic wide cosmic shot, no people"
+    }
+  ]
+}
