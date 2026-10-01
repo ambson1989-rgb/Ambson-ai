@@ -1,0 +1,21 @@
+{
+  "topic": "The Library of Alexandria — what was actually lost",
+  "beats": [
+    {
+      "narration": "The Library of Alexandria is often called the greatest loss in history.",
+      "image_prompt": "grand ancient Hellenistic library interior with scrolls and columns, warm golden light, cinematic, no people"
+    },
+    {
+      "narration": "It was part of a research institution in Ptolemaic Egypt, drawing scholars from across the Mediterranean.",
+      "image_prompt": "ancient Alexandria harbor with lighthouse silhouette, classical architecture, sunset over the sea, no people"
+    },
+    {
+      "narration": "There was no single dramatic fire that wiped everything out. Decline happened over centuries.",
+      "image_prompt": "scattered ancient scrolls and ash on stone floor, dim light, melancholic atmosphere, no people"
+    },
+    {
+      "narration": "What disappeared was not one catalogue of wonders — but centuries of accumulated knowledge, piece by piece.",
+      "image_prompt": "empty classical ruins at twilight, broken columns, reflective mood, cinematic wide shot, no people"
+    }
+  ]
+}

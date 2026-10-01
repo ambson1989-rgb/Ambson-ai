@@ -1,0 +1,21 @@
+{
+  "topic": "The Great Pyramid's precision — and the gaps in the record",
+  "beats": [
+    {
+      "narration": "The Great Pyramid is aligned to true north within a fraction of a degree.",
+      "image_prompt": "Great Pyramid of Giza at dawn, golden light, vast desert, cinematic wide shot, dramatic sky, no people"
+    },
+    {
+      "narration": "Built more than 4,500 years ago, it contains roughly 2.3 million stone blocks, some weighing over 40 tons.",
+      "image_prompt": "massive ancient limestone blocks stacked in a pyramid structure, close-up texture of weathered stone, warm desert light, no people"
+    },
+    {
+      "narration": "How the heaviest stones were raised is still not fully settled — ramps, levers, and internal systems are all proposed.",
+      "image_prompt": "artistic reconstruction of ancient Egyptian construction ramps beside a rising pyramid, soft documentary light, no people"
+    },
+    {
+      "narration": "What is clear: the builders left almost no written explanation of the method.",
+      "image_prompt": "empty desert plateau with the Giza pyramids in silhouette under stars, contemplative night sky, cinematic, no people"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "topic": "Voynich Manuscript — the book no one can read",
+  "beats": [
+    {
+      "narration": "A 600-year-old book written in a language no one can read.",
+      "image_prompt": "ancient mysterious manuscript pages with unknown script and strange botanical drawings, parchment texture, museum lighting, no people"
+    },
+    {
+      "narration": "The Voynich Manuscript appeared in recorded history in the 1600s and is carbon-dated to the early 1400s.",
+      "image_prompt": "weathered medieval parchment codex on a wooden table, candlelight, dust particles in air, cinematic, no people"
+    },
+    {
+      "narration": "It is filled with unknown script, odd plants, astronomical diagrams, and naked figures in green baths.",
+      "image_prompt": "close-up of bizarre medieval botanical illustration on aged parchment, strange unknown plants, muted colors, no people"
+    },
+    {
+      "narration": "Cryptographers, historians, and AI researchers have all tried. It remains unsolved.",
+      "image_prompt": "dark library shelves filled with ancient books, single beam of light on an open undeciphered manuscript, mysterious atmosphere, no people"
+    }
+  ]
+}

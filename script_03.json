@@ -1,0 +1,21 @@
+{
+  "topic": "The Baghdad Battery — a 2,000-year-old clay jar that could make electricity",
+  "beats": [
+    {
+      "narration": "A 2,000-year-old clay jar that might have made electricity.",
+      "image_prompt": "ancient clay jar with copper cylinder inside, museum display lighting, dark background, mysterious archaeological artifact, highly detailed, no people"
+    },
+    {
+      "narration": "Found near Baghdad and dated to the Parthian or Sasanian period, it held a copper cylinder and an iron rod.",
+      "image_prompt": "cutaway illustration of an ancient clay vessel containing a copper tube and iron rod, technical archaeological style, warm lighting, no people"
+    },
+    {
+      "narration": "Filled with an acidic liquid, similar jars can produce a small voltage — enough for electroplating in modern tests.",
+      "image_prompt": "close-up of green copper corrosion and iron metal, scientific macro photography, dramatic side light, no people"
+    },
+    {
+      "narration": "Whether ancient people used it that way is still debated — no texts describe it as a battery.",
+      "image_prompt": "ancient Mesopotamian ruins at sunset, dusty atmosphere, cinematic wide shot, contemplative mood, no people"
+    }
+  ]
+}

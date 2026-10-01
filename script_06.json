@@ -1,0 +1,21 @@
+{
+  "topic": "Otzi the Iceman — a 5,300-year-old murder mystery",
+  "beats": [
+    {
+      "narration": "In 1991, hikers found a body melting out of an Alpine glacier.",
+      "image_prompt": "high alpine glacier landscape, icy blue tones, misty peaks, cinematic documentary style, no people"
+    },
+    {
+      "narration": "Otzi lived about 5,300 years ago. His gear included a copper axe, a bow, and a quiver of arrows.",
+      "image_prompt": "ancient copper axe and wooden bow on stone, prehistoric tools, museum-style dramatic lighting, no people"
+    },
+    {
+      "narration": "A flint arrowhead was lodged in his shoulder. He had defensive wounds on his hands.",
+      "image_prompt": "close-up of a prehistoric flint arrowhead, sharp edges, dark moody lighting, forensic documentary style, no people"
+    },
+    {
+      "narration": "He likely died from the arrow wound — one of the oldest known forensic murder cases.",
+      "image_prompt": "snowy alpine pass at dusk, lonely and cold atmosphere, cinematic wide shot, no people"
+    }
+  ]
+}
