@@ -148,3 +148,36 @@ def reply_to_comment(comment_id: str, message: str) -> str:
     if not rid:
         raise RuntimeError(f"No reply id: {resp.text}")
     return rid
+
+
+def like_comment(comment_id: str) -> bool:
+    """
+    Like a comment on behalf of the IG professional account.
+    POST /{ig-user-id}/likes with comment_id.
+    Needs engagement permission (instagram_manage_engagement or equivalent).
+    Returns True on success; False if API rejects (logged, non-fatal).
+    """
+    resp = requests.post(
+        _url(f"{IG_USER_ID}/likes"),
+        data={"comment_id": comment_id, "access_token": ACCESS_TOKEN},
+        timeout=20,
+    )
+    if resp.ok:
+        log.info("Liked comment %s", comment_id)
+        return True
+    # Try JSON body form (some API versions prefer this)
+    resp2 = requests.post(
+        _url(f"{IG_USER_ID}/likes"),
+        json={"comment_id": comment_id},
+        headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+        timeout=20,
+    )
+    if resp2.ok:
+        log.info("Liked comment %s (json body)", comment_id)
+        return True
+    try:
+        body = resp2.json() if not resp.ok else resp.json()
+    except Exception:
+        body = (resp2.text or resp.text)[:500]
+    log.warning("Like comment %s failed: %s / %s", comment_id, resp.status_code, body)
+    return False

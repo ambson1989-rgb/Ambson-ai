@@ -27,22 +27,22 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           COMMENT_MAX_REPLIES: "10"
-          COMMENT_MEDIA_LIMIT: "5"
+          COMMENT_MEDIA_LIMIT: "10"
           COMMENT_MIN_DELAY_SEC: "30"
           COMMENT_MAX_DELAY_SEC: "90"
         run: python run_comment_bot.py
 
-      - name: Persist replied-comment state
+      - name: Persist comment state
         if: always()
         run: |
           git config user.name "reels-agent-bot"
           git config user.email "actions@users.noreply.github.com"
           git pull --rebase origin main || true
-          git add replied_comments.json || true
+          git add replied_comments.json liked_comments.json || true
           if git diff --cached --quiet; then
             echo "No state change"
           else
-            git commit -m "chore: update replied-comments state"
+            git commit -m "chore: update replied/liked comment state"
             git pull --rebase origin main
             git push
           fi
