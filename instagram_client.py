@@ -1,8 +1,5 @@
 """
-Instagram API with Instagram Login (graph.instagram.com):
-  1. POST /{ig_user_id}/media  (REELS + video_url)
-  2. Poll container status_code until FINISHED
-  3. POST /{ig_user_id}/media_publish
+Instagram API with Instagram Login (graph.instagram.com).
 """
 
 import logging
@@ -29,35 +26,33 @@ def _raise_for_status(resp: requests.Response) -> None:
         body = resp.json()
     except Exception:
         body = resp.text[:1000]
-    log.error("Instagram API %s %s -> %s %s", resp.request.method, resp.url.split("?")[0], resp.status_code, body)
-    raise requests.HTTPError(
-        f"{resp.status_code} Client Error: {body}",
-        response=resp,
+    log.error(
+        "Instagram API %s %s -> %s %s",
+        resp.request.method,
+        resp.url.split("?")[0],
+        resp.status_code,
+        body,
     )
+    raise requests.HTTPError(f"{resp.status_code} Client Error: {body}", response=resp)
 
 
 def verify_public_video(video_url: str) -> None:
-    """Ensure Instagram can fetch the file (public HTTPS, video content-type)."""
     log.info("Verifying public video URL is fetchable...")
     try:
         head = requests.head(video_url, timeout=30, allow_redirects=True)
-        # Some hosts block HEAD — fall back to ranged GET
         if head.status_code >= 400:
             head = requests.get(video_url, headers={"Range": "bytes=0-1023"}, timeout=30)
         ct = head.headers.get("Content-Type", "")
         log.info("Public URL check: status=%s content-type=%s", head.status_code, ct)
         if head.status_code >= 400:
             raise RuntimeError(
-                f"Video URL not publicly readable (HTTP {head.status_code}): {video_url}. "
-                f"Enable R2 Public Development URL (r2.dev) or a custom public domain."
+                f"Video URL not publicly readable (HTTP {head.status_code}): {video_url}"
             )
     except requests.RequestException as e:
         raise RuntimeError(f"Cannot reach video URL {video_url}: {e}") from e
 
 
 def create_reel_container(video_url: str, caption: str, is_ai_generated: bool = True) -> str:
-    """Start processing a video as a Reel. Returns the container ID."""
-    # Form body (not query string) — matches Meta examples; safer for long captions.
     data = {
         "media_type": "REELS",
         "video_url": video_url,
@@ -70,7 +65,6 @@ def create_reel_container(video_url: str, caption: str, is_ai_generated: bool = 
 
     resp = requests.post(_url(f"{IG_USER_ID}/media"), data=data, timeout=60)
     if not resp.ok and is_ai_generated:
-        # Retry once without AI flag if the parameter is rejected
         log.warning("Create container failed with is_ai_generated; retrying without it: %s", resp.text[:300])
         data.pop("is_ai_generated", None)
         resp = requests.post(_url(f"{IG_USER_ID}/media"), data=data, timeout=60)
@@ -89,10 +83,7 @@ def wait_for_container(container_id: str, timeout_s: int = 300, poll_every_s: in
     while time.time() < deadline:
         resp = requests.get(
             _url(container_id),
-            params={
-                "fields": "status_code,status",
-                "access_token": ACCESS_TOKEN,
-            },
+            params={"fields": "status_code,status", "access_token": ACCESS_TOKEN},
             timeout=15,
         )
         _raise_for_status(resp)
@@ -133,18 +124,27 @@ def publish_reel(video_url: str, caption: str, is_ai_generated: bool = True) -> 
 def get_recent_comments(media_id: str) -> list[dict]:
     resp = requests.get(
         _url(f"{media_id}/comments"),
-        params={"fields": "id,text,username,timestamp", "access_token": ACCESS_TOKEN},
-        timeout=15,
+        params={
+            "fields": "id,text,username,timestamp,from",
+            "limit": 50,
+            "access_token": ACCESS_TOKEN,
+        },
+        timeout=20,
     )
     _raise_for_status(resp)
-    return resp.json().get("data", [])
+    data = resp.json().get("data", [])
+    log.info("Comments API for %s returned %d item(s)", media_id, len(data))
+    return data
 
 
 def reply_to_comment(comment_id: str, message: str) -> str:
     resp = requests.post(
         _url(f"{comment_id}/replies"),
         data={"message": message, "access_token": ACCESS_TOKEN},
-        timeout=15,
+        timeout=20,
     )
     _raise_for_status(resp)
-    return resp.json()["id"]
+    rid = resp.json().get("id")
+    if not rid:
+        raise RuntimeError(f"No reply id: {resp.text}")
+    return rid

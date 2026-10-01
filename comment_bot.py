@@ -1,8 +1,5 @@
 """
-Reply to a small number of new comments, slowly.
-
-Aggressive auto-replying triggers Instagram integrity checks
-("confirm you're human", forced re-login). Keep limits low.
+Reply to a limited number of new comments, slowly.
 """
 
 import json
@@ -13,33 +10,33 @@ import time
 
 from google import genai
 from google.genai import types
-from instagram_client import get_recent_comments, reply_to_comment
+from instagram_client import get_recent_comments, reply_to_comment, IG_USER_ID
 
 log = logging.getLogger("comment_bot")
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 STATE_FILE = os.path.join(os.path.dirname(__file__), "replied_comments.json")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-MAX_REPLIES = int(os.environ.get("COMMENT_MAX_REPLIES", "2"))
-MIN_DELAY = int(os.environ.get("COMMENT_MIN_DELAY_SEC", "45"))
-MAX_DELAY = int(os.environ.get("COMMENT_MAX_DELAY_SEC", "120"))
+MIN_DELAY = int(os.environ.get("COMMENT_MIN_DELAY_SEC", "30"))
+MAX_DELAY = int(os.environ.get("COMMENT_MAX_DELAY_SEC", "90"))
 
 SYSTEM_PROMPT = """You reply to Instagram comments on a history/science fact account.
-Keep replies short (one sentence), warm, and human — like a creator tapping a reply
-between posts. Never sarcastic or argumentative.
-
+Keep replies short (one sentence), warm, and human.
 Rules:
-- One short sentence is best.
-- Don't lecture. A thank-you or light reaction is enough.
+- One short sentence.
+- Thank-you or light reaction is enough.
 - If asked if you're a bot/AI, answer briefly and honestly.
-- Skip engaging with spam, hate, or scams: reply with a simple thanks only.
+- Spam/hate: short neutral thanks only.
 - Output ONLY the reply text."""
 
 
 def _load_replied_ids() -> set:
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return set(json.load(f))
+        try:
+            with open(STATE_FILE) as f:
+                return set(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            pass
     return set()
 
 
@@ -50,7 +47,7 @@ def _save_replied_ids(ids: set) -> None:
 
 def generate_reply(comment_text: str) -> str:
     response = client.models.generate_content(
-        model=GEMINI_MODEL,
+        model=GEMINI_MODEL or "gemini-3.5-flash-lite",
         contents=f"Comment: {comment_text}",
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
@@ -59,19 +56,23 @@ def generate_reply(comment_text: str) -> str:
         ),
     )
     text = (response.text or "").strip()
-    # Hard cap length so replies look casual
     if len(text) > 140:
         text = text[:137] + "..."
     return text
 
 
 def process_media_comments(media_id: str, budget: int) -> int:
-    """Reply to up to `budget` new comments on this media."""
     if budget <= 0:
         return 0
 
     replied_ids = _load_replied_ids()
-    comments = get_recent_comments(media_id)
+    try:
+        comments = get_recent_comments(media_id)
+    except Exception as e:
+        log.error("Failed to fetch comments for %s: %s", media_id, e)
+        return 0
+
+    log.info("Media %s: %d comment(s) from API", media_id, len(comments))
     count = 0
 
     for comment in comments:
@@ -79,27 +80,38 @@ def process_media_comments(media_id: str, budget: int) -> int:
             break
         cid = comment.get("id")
         text = (comment.get("text") or "").strip()
-        if not cid or cid in replied_ids:
+        username = comment.get("username") or ""
+        if not cid:
             continue
-        # Skip empty / emoji-only noise optionally still reply to simple ones
+        if cid in replied_ids:
+            log.info("  skip already-replied %s", cid)
+            continue
         if not text:
             continue
+        # Don't reply to our own comments
+        # (username may not always match; still try)
 
         try:
             reply_text = generate_reply(text)
             if not reply_text:
+                log.warning("  empty Gemini reply for %s", cid)
                 continue
-            reply_to_comment(cid, reply_text)
+            reply_id = reply_to_comment(cid, reply_text)
             replied_ids.add(cid)
             count += 1
-            log.info("Replied on %s: %s", media_id, reply_text[:80])
+            log.info(
+                "  Replied to @%s (%s) -> %r (reply_id=%s)",
+                username,
+                cid,
+                reply_text[:80],
+                reply_id,
+            )
             if count < budget:
                 delay = random.randint(MIN_DELAY, MAX_DELAY)
-                log.info("Sleeping %ss before next reply (anti-spam)", delay)
+                log.info("  Sleeping %ss before next reply", delay)
                 time.sleep(delay)
         except Exception as e:
-            log.warning("Reply failed for %s: %s", cid, e)
-            # Don't burn the budget on repeated API blocks
+            log.error("  Reply failed for %s: %s", cid, e)
             break
 
     _save_replied_ids(replied_ids)
