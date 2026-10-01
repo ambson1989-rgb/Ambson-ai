@@ -1,8 +1,5 @@
 """
-Upload rendered Reels to S3-compatible storage so Instagram can fetch them
-via a public HTTPS URL. Also prune old objects to stay on free-tier storage.
-
-Works with Cloudflare R2, AWS S3, Backblaze B2 (S3 mode).
+Upload rendered Reels to S3-compatible storage; prune old objects.
 """
 
 import logging
@@ -22,7 +19,7 @@ def _client():
         "service_name": "s3",
         "aws_access_key_id": os.environ["PUBLIC_MEDIA_ACCESS_KEY"],
         "aws_secret_access_key": os.environ["PUBLIC_MEDIA_SECRET_KEY"],
-        "region_name": os.environ.get("PUBLIC_MEDIA_REGION", "auto"),
+        "region_name": os.environ.get("PUBLIC_MEDIA_REGION") or "auto",
         "config": Config(signature_version="s3v4"),
     }
     endpoint = os.environ.get("PUBLIC_MEDIA_ENDPOINT", "").strip()
@@ -39,31 +36,25 @@ def _prefix() -> str:
 
 
 def upload_to_public_host(local_path: str) -> str:
-    """Upload a local file and return its public HTTPS URL."""
     bucket = os.environ["PUBLIC_MEDIA_BUCKET"]
     base_url = os.environ["PUBLIC_MEDIA_BASE_URL"].rstrip("/")
     prefix = _prefix()
-
     filename = Path(local_path).name
     key = f"{prefix}{filename}"
     content_type = mimetypes.guess_type(local_path)[0] or "video/mp4"
 
     client = _client()
     log.info("Uploading %s -> s3://%s/%s", local_path, bucket, key)
-
     extra = {"ContentType": content_type}
     if not os.environ.get("PUBLIC_MEDIA_ENDPOINT"):
         extra["ACL"] = "public-read"
-
     client.upload_file(local_path, bucket, key, ExtraArgs=extra)
-
     public_url = f"{base_url}/{key}"
     log.info("Public URL: %s", public_url)
     return public_url
 
 
 def _key_from_public_url(public_url: str) -> str | None:
-    """Best-effort extract object key from public URL."""
     base = os.environ.get("PUBLIC_MEDIA_BASE_URL", "").rstrip("/")
     if base and public_url.startswith(base + "/"):
         return public_url[len(base) + 1 :]
@@ -72,7 +63,6 @@ def _key_from_public_url(public_url: str) -> str | None:
 
 
 def delete_public_object(public_url: str) -> None:
-    """Delete one object after Instagram has finished fetching it."""
     key = _key_from_public_url(public_url)
     if not key:
         log.warning("Could not derive R2 key from URL: %s", public_url)
@@ -86,13 +76,12 @@ def delete_public_object(public_url: str) -> None:
 
 
 def cleanup_old_media(keep: int | None = None) -> int:
-    """
-    Keep only the newest `keep` objects under PUBLIC_MEDIA_PREFIX.
-    Default keep = R2_KEEP_OBJECTS env or 4 (2 posts/day × 2 days buffer).
-    Returns number of objects deleted.
-    """
+    raw = os.environ.get("R2_KEEP_OBJECTS", "4").strip()
     if keep is None:
-        keep = int(os.environ.get("R2_KEEP_OBJECTS", "4"))
+        try:
+            keep = int(raw) if raw else 4
+        except ValueError:
+            keep = 4
 
     bucket = os.environ["PUBLIC_MEDIA_BUCKET"]
     prefix = _prefix()
@@ -112,13 +101,12 @@ def cleanup_old_media(keep: int | None = None) -> int:
         token = resp.get("NextContinuationToken")
 
     if len(objects) <= keep:
-        log.info("R2 cleanup: %d object(s) under %s (keep=%d) — nothing to delete", len(objects), prefix, keep)
+        log.info("R2 cleanup: %d object(s) (keep=%d) — nothing to delete", len(objects), keep)
         return 0
 
     objects.sort(key=lambda o: o["LastModified"], reverse=True)
-    to_delete = objects[keep:]
     deleted = 0
-    for obj in to_delete:
+    for obj in objects[keep:]:
         key = obj["Key"]
         try:
             client.delete_object(Bucket=bucket, Key=key)
@@ -126,6 +114,5 @@ def cleanup_old_media(keep: int | None = None) -> int:
             deleted += 1
         except Exception as e:
             log.warning("R2 cleanup failed for %s: %s", key, e)
-
     log.info("R2 cleanup done: deleted %d, kept %d", deleted, keep)
     return deleted

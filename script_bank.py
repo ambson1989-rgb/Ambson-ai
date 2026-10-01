@@ -1,6 +1,7 @@
-"""Fact-checked scripts. pick_script advances on EVERY run (manual or scheduled)."""
+"""Fact-checked scripts. pick_script advances every run and skips already-used topics."""
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,31 +49,42 @@ def _save_state(state: dict) -> None:
         json.dump(existing, f, indent=2)
 
 
+def _normalize(topic: str) -> str:
+    t = re.sub(r"\s+", " ", (topic or "").lower().strip())
+    return re.sub(r"[^a-z0-9\s]", "", t)[:100]
+
+
 def pick_script() -> dict:
-    """Advance to the next script on EVERY call. Never repeats the same topic until the pool cycles."""
+    """Next bank script that is not in used_topics."""
     state = _load_state()
     scripts = _load_scripts()
     n = len(scripts)
     last_index = int(state.get("last_index", -1))
-    next_index = (last_index + 1) % n
+    used = {_normalize(x) for x in (state.get("used_topics") or []) if x}
 
-    used = list(state.get("used_topics") or [])
-    recent = set(used[-(max(n - 1, 1)):])
-    chosen = next_index
+    chosen = None
     for step in range(n):
-        idx = (next_index + step) % n
+        idx = (last_index + 1 + step) % n
         topic = scripts[idx]["topic"]
-        if topic not in recent or step == n - 1:
+        norm = _normalize(topic)
+        if norm not in used and not any(norm in u or u in norm for u in used if len(u) > 15):
             chosen = idx
             break
 
+    if chosen is None:
+        # All bank scripts used at least once — pick next index anyway
+        chosen = (last_index + 1) % n
+        log_msg = scripts[chosen]["topic"]
+        print(f"WARNING: all bank scripts already used; recycling: {log_msg}")
+
     topic = scripts[chosen]["topic"]
-    used.append(topic)
-    used = used[-(n * 2):]
+    used_list = list(state.get("used_topics") or [])
+    used_list.append(topic)
+    used_list = used_list[-500:]
 
     _save_state({
         "last_index": chosen,
         "last_run_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "used_topics": used,
+        "used_topics": used_list,
     })
     return scripts[chosen]
