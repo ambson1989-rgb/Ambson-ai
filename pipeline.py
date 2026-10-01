@@ -1,6 +1,10 @@
 """
-Generate and publish one Reel. Scheduled twice daily via GitHub Actions.
-Only gate is automated safety_gate (unless SKIP_SAFETY_GATE=1).
+Generate and publish one Reel.
+
+CONTENT_MODE:
+  bank   — curated script_bank (default; morning)
+  trend  — niche-trending topic via Reddit + Gemini (evening)
+  auto   — trend first, fall back to bank
 """
 
 import logging
@@ -24,14 +28,16 @@ WORK_DIR = os.path.join(os.path.dirname(__file__), "renders")
 os.makedirs(WORK_DIR, exist_ok=True)
 
 
-def build_caption(topic: str) -> str:
+def build_caption(topic: str, source: str = "bank") -> str:
     affiliate_link = os.environ.get("AFFILIATE_LINK", "")
     cta = "\n\nLink in bio \U0001f517" if affiliate_link else ""
-    return (
-        f"{topic}\n.\n.\n"
-        f"#history #ancientengineering #cosmicmysteries #didyouknow "
-        f"#sciencefacts #ancienthistory #spacefacts{cta}"
+    tags = (
+        "#history #ancientengineering #cosmicmysteries #didyouknow "
+        "#sciencefacts #ancienthistory #spacefacts"
     )
+    if source == "trend":
+        tags += " #trending #science"
+    return f"{topic}\n.\n.\n{tags}{cta}"
 
 
 def notify(message: str) -> None:
@@ -45,9 +51,30 @@ def notify(message: str) -> None:
         log.warning("Notify webhook failed: %s", e)
 
 
-def run_once() -> None:
+def select_script() -> dict:
+    mode = os.environ.get("CONTENT_MODE", "bank").strip().lower()
+    log.info("CONTENT_MODE=%s", mode)
+
+    if mode in ("trend", "auto"):
+        try:
+            from trend_script import generate_trend_script
+            script = generate_trend_script()
+            if script:
+                return script
+            log.warning("Trend mode produced no script; falling back to script bank")
+        except Exception as e:
+            log.warning("Trend pipeline failed (%s); falling back to script bank", e)
+
     script = pick_script()
-    log.info("Today's script: %s", script["topic"])
+    script = dict(script)
+    script["source"] = "bank"
+    return script
+
+
+def run_once() -> None:
+    script = select_script()
+    source = script.get("source", "bank")
+    log.info("Selected [%s]: %s", source, script["topic"])
 
     run_id = uuid.uuid4().hex[:8]
     run_dir = os.path.join(WORK_DIR, run_id)
@@ -55,7 +82,6 @@ def run_once() -> None:
 
     clip_paths = []
     full_narration = []
-    video_url = None
 
     try:
         for i, beat in enumerate(script["beats"]):
@@ -75,7 +101,7 @@ def run_once() -> None:
         concat_clips(clip_paths, final_path)
         log.info("Assembled: %s", final_path)
 
-        caption = build_caption(script["topic"])
+        caption = build_caption(script["topic"], source=source)
         safe, reason = check_content_safe(caption, " ".join(full_narration))
         if not safe:
             log.error("Safety gate blocked this post: %s", reason)
@@ -88,8 +114,7 @@ def run_once() -> None:
 
         if media_id:
             log.info("Published: %s", media_id)
-            notify(f"✅ Published Reel: {script['topic']}\nmedia_id={media_id}")
-            # Instagram has already fetched the file — free R2 storage
+            notify(f"✅ Published Reel [{source}]: {script['topic']}\nmedia_id={media_id}")
             try:
                 delete_public_object(video_url)
                 cleanup_old_media()
@@ -98,7 +123,6 @@ def run_once() -> None:
         else:
             log.error("Publish failed (container never reached FINISHED).")
             notify(f"❌ Publish failed for: {script['topic']}")
-            # Still prune old objects so failed retries don't fill the bucket
             try:
                 cleanup_old_media()
             except Exception as e:

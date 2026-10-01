@@ -1,13 +1,18 @@
 name: Daily reel post
 
 # Two posts per day (IST):
-#   08:00 IST = 02:30 UTC
-#   20:00 IST = 14:30 UTC
+#   08:00 IST = 02:30 UTC  → curated script bank
+#   20:00 IST = 14:30 UTC  → niche trend (history/science/space)
 on:
   schedule:
-    - cron: "30 2 * * *"   # morning IST
-    - cron: "30 14 * * *"  # evening IST
-  workflow_dispatch: {}
+    - cron: "30 2 * * *"   # morning IST — bank
+    - cron: "30 14 * * *"  # evening IST — trend
+  workflow_dispatch:
+    inputs:
+      content_mode:
+        description: "bank | trend | auto"
+        required: false
+        default: "bank"
 
 permissions:
   contents: write
@@ -38,8 +43,24 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      - name: Resolve content mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.content_mode }}"
+            MODE="${MODE:-bank}"
+          elif [ "${{ github.event.schedule }}" = "30 14 * * *" ]; then
+            MODE="trend"
+          else
+            MODE="bank"
+          fi
+          echo "CONTENT_MODE=$MODE" >> "$GITHUB_ENV"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "Using CONTENT_MODE=$MODE"
+
       - name: Run pipeline
         env:
+          CONTENT_MODE: ${{ env.CONTENT_MODE }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
