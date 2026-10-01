@@ -1,0 +1,25 @@
+{
+  "topic": "The Antikythera mechanism — the 2,000-year-old Greek analog computer",
+  "beats": [
+    {
+      "narration": "This 2,000-year-old machine shouldn't exist.",
+      "image_prompt": "cinematic photo of a corroded ancient bronze mechanical device with intricate gears, museum lighting, dark background, mysterious atmosphere, highly detailed, no people"
+    },
+    {
+      "narration": "In 1901, sponge divers found a corroded block of bronze off the Greek island of Antikythera.",
+      "image_prompt": "cinematic underwater scene, ancient shipwreck on Mediterranean seabed, sunlight rays through water, bronze artifact fragment, no people, moody atmospheric lighting"
+    },
+    {
+      "narration": "Inside were more than 30 hand-driven bronze gears, modeling the cycles of the Moon, Sun, and known planets.",
+      "image_prompt": "extreme close-up of intricate ancient bronze gear mechanism, cosmic diagram of sun moon and planets etched into metal, warm golden light, highly detailed engineering, no people"
+    },
+    {
+      "narration": "Nothing this mechanically complex is known from before the fourteenth century.",
+      "image_prompt": "dramatic split composition, ancient bronze clockwork gears contrasted with a medieval European clock tower, mysterious dark cinematic lighting, no people"
+    },
+    {
+      "narration": "Who built it is still unconfirmed.",
+      "image_prompt": "ancient Greek ruins silhouette at dusk under a starry night sky, contemplative and mysterious mood, wide cinematic shot, no people"
+    }
+  ]
+}

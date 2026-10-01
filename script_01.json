@@ -1,0 +1,21 @@
+{
+  "topic": "Tesla's Wardenclyffe Tower and why J.P. Morgan pulled funding",
+  "beats": [
+    {
+      "narration": "Tesla's tower was meant to talk across the Atlantic.",
+      "image_prompt": "cinematic photo of a tall early 1900s wooden and steel wireless transmission tower against a dramatic sky, sepia toned, atmospheric lighting, no people"
+    },
+    {
+      "narration": "In 1901, J.P. Morgan invested $150,000 in it — the aim was sending messages across the ocean without cables.",
+      "image_prompt": "vintage early 20th century laboratory with wireless transmission equipment, glowing electrical coils, dramatic sepia cinematic lighting, no people"
+    },
+    {
+      "narration": "When Tesla wanted to expand toward wireless power, Morgan refused more funding — the project was abandoned in 1906, and the tower was demolished for scrap in 1917.",
+      "image_prompt": "abandoned decaying wooden transmission tower at dusk, overgrown lot, melancholic cinematic lighting, no people"
+    },
+    {
+      "narration": "The popular 'free energy for the world' story is disputed — one historian says Tesla never planned free energy.",
+      "image_prompt": "old sepia toned newspaper clippings and blueprint sketches of an electrical tower scattered on a wooden desk, dramatic side lighting, no people"
+    }
+  ]
+}
