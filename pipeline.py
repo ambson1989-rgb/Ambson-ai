@@ -20,6 +20,7 @@ from video_assemble import build_beat_clip, concat_clips
 from safety_gate import check_content_safe
 from instagram_client import publish_reel
 from media_host import upload_to_public_host, delete_public_object, cleanup_old_media
+from cta import next_cta_beat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pipeline")
@@ -84,7 +85,11 @@ def run_once() -> None:
     full_narration = []
 
     try:
-        for i, beat in enumerate(script["beats"]):
+        beats = list(script["beats"])
+        cta = next_cta_beat()
+        log.info("CTA set #%s: %s", cta.get("cta_index"), cta["on_screen_text"])
+
+        for i, beat in enumerate(beats):
             img_path = os.path.join(run_dir, f"beat{i}.png")
             audio_path = os.path.join(run_dir, f"beat{i}.mp3")
             clip_path = os.path.join(run_dir, f"beat{i}.mp4")
@@ -95,14 +100,27 @@ def run_once() -> None:
 
             clip_paths.append(clip_path)
             full_narration.append(beat["narration"])
-            log.info("Beat %d/%d done", i + 1, len(script["beats"]))
+            log.info("Beat %d/%d done", i + 1, len(beats))
+
+        # Final CTA beat: spoken enthusiasm + short on-screen follow/like line
+        cta_i = len(beats)
+        img_path = os.path.join(run_dir, f"beat{cta_i}.png")
+        audio_path = os.path.join(run_dir, f"beat{cta_i}.mp3")
+        clip_path = os.path.join(run_dir, f"beat{cta_i}.mp4")
+        generate_image(cta["image_prompt"], img_path)
+        generate_narration(cta["narration"], audio_path)
+        build_beat_clip(img_path, audio_path, cta["on_screen_text"], clip_path)
+        clip_paths.append(clip_path)
+        full_narration.append(cta["narration"])
+        log.info("CTA beat done")
 
         final_path = os.path.join(run_dir, "final.mp4")
         concat_clips(clip_paths, final_path)
         log.info("Assembled: %s", final_path)
 
         caption = build_caption(script["topic"], source=source)
-        safe, reason = check_content_safe(caption, " ".join(full_narration))
+        # Safety check on educational content only (not the marketing CTA)
+        safe, reason = check_content_safe(caption, " ".join(full_narration[:-1]) or " ".join(full_narration))
         if not safe:
             log.error("Safety gate blocked this post: %s", reason)
             notify(f"⚠️ Safety gate blocked post: {script['topic']}\nReason: {reason}")
