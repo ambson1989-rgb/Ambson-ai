@@ -1,12 +1,8 @@
 name: Reply to comments
 
-# SCHEDULE DISABLED — frequent auto-replies can trigger Instagram
-# "confirm you're human" / re-login challenges.
-# Run manually only when you want a few replies (Actions → Run workflow).
+# Manual only — schedule off to avoid IG integrity checks.
 on:
   workflow_dispatch: {}
-  # schedule:
-  #   - cron: "0 */6 * * *"
 
 permissions:
   contents: write
@@ -30,10 +26,10 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
-          COMMENT_MAX_REPLIES: "2"
-          COMMENT_MEDIA_LIMIT: "2"
-          COMMENT_MIN_DELAY_SEC: "45"
-          COMMENT_MAX_DELAY_SEC: "120"
+          COMMENT_MAX_REPLIES: "10"
+          COMMENT_MEDIA_LIMIT: "5"
+          COMMENT_MIN_DELAY_SEC: "30"
+          COMMENT_MAX_DELAY_SEC: "90"
         run: python run_comment_bot.py
 
       - name: Persist replied-comment state
