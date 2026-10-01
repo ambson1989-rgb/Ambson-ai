@@ -1,18 +1,18 @@
 name: Daily reel post
 
-# Two posts per day (IST):
-#   08:00 IST = 02:30 UTC  → curated script bank
-#   20:00 IST = 14:30 UTC  → niche trend (history/science/space)
+# Two posts per day (IST) — always unique trend content
+#   08:00 IST = 02:30 UTC
+#   20:00 IST = 14:30 UTC
 on:
   schedule:
-    - cron: "30 2 * * *"   # morning IST — bank
-    - cron: "30 14 * * *"  # evening IST — trend
+    - cron: "30 2 * * *"
+    - cron: "30 14 * * *"
   workflow_dispatch:
     inputs:
       content_mode:
-        description: "bank | trend | auto"
+        description: "auto (default) | trend | bank"
         required: false
-        default: "bank"
+        default: "auto"
 
 permissions:
   contents: write
@@ -48,11 +48,9 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MODE="${{ github.event.inputs.content_mode }}"
-            MODE="${MODE:-bank}"
-          elif [ "${{ github.event.schedule }}" = "30 14 * * *" ]; then
-            MODE="trend"
+            MODE="${MODE:-auto}"
           else
-            MODE="bank"
+            MODE="auto"
           fi
           echo "CONTENT_MODE=$MODE" >> "$GITHUB_ENV"
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
@@ -61,6 +59,7 @@ jobs:
       - name: Run pipeline
         env:
           CONTENT_MODE: ${{ env.CONTENT_MODE }}
+          MAX_REEL_SECONDS: "58"
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -81,7 +80,7 @@ jobs:
           CLEANUP_RENDERS: "1"
         run: python pipeline.py
 
-      - name: Persist script rotation state
+      - name: Persist rotation state
         if: always()
         run: |
           git config user.name "reels-agent-bot"
@@ -91,7 +90,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No state change to commit"
           else
-            git commit -m "chore: update script rotation state"
+            git commit -m "chore: update used-topics / script state"
             git pull --rebase origin main
             git push
           fi

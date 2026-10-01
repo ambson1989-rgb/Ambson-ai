@@ -1,14 +1,20 @@
 """
-Assembles a Reel from beats (still image + matching narration audio) using
-ffmpeg: Ken Burns zoom, burned-in caption, then concat to one vertical video.
+Assembles a Reel from beats (still + narration) with Ken Burns + captions.
+Enforces a max total duration so posts stay short and R2-friendly.
 """
 
+import logging
 import os
 import subprocess
 import textwrap
 
+log = logging.getLogger("video_assemble")
+
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "Montserrat-Bold.ttf")
 W, H, FPS = 1080, 1920, 30
+
+# Target: under 1 minute total (including CTA). Strong trends can stretch to this max.
+MAX_REEL_SECONDS = float(os.environ.get("MAX_REEL_SECONDS", "58"))
 
 
 def _probe_duration(path: str) -> float:
@@ -38,7 +44,6 @@ def build_beat_clip(image_path: str, audio_path: str, caption: str, out_path: st
     with open(caption_path, "w") as f:
         f.write(_wrap_caption(caption))
 
-    # Escape path for drawtext filter (colons/special chars)
     font = FONT_PATH.replace("\\", "/").replace(":", "\\:")
     cap = caption_path.replace("\\", "/").replace(":", "\\:")
 
@@ -81,5 +86,24 @@ def concat_clips(clip_paths: list[str], out_path: str) -> str:
     finally:
         if os.path.exists(list_path):
             os.remove(list_path)
+
+    # Enforce max length (keep under 1 min; R2-friendly small files)
+    try:
+        dur = _probe_duration(out_path)
+        log.info("Assembled duration: %.1fs (max %.0fs)", dur, MAX_REEL_SECONDS)
+        if dur > MAX_REEL_SECONDS:
+            trimmed = out_path + ".trim.mp4"
+            _run_ffmpeg(
+                [
+                    "ffmpeg", "-y", "-i", out_path,
+                    "-t", str(MAX_REEL_SECONDS),
+                    "-c", "copy",
+                    trimmed,
+                ]
+            )
+            os.replace(trimmed, out_path)
+            log.info("Trimmed reel to %.0fs", MAX_REEL_SECONDS)
+    except Exception as e:
+        log.warning("Duration check/trim skipped: %s", e)
 
     return out_path

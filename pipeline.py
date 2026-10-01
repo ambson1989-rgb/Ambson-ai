@@ -1,10 +1,8 @@
 """
-Generate and publish one Reel.
+Generate and publish one unique Reel every run.
 
-CONTENT_MODE:
-  bank   — curated script_bank (default; morning)
-  trend  — niche-trending topic via Reddit + Gemini (evening)
-  auto   — trend first, fall back to bank
+Always prefers fresh niche trends (CONTENT_MODE=auto by default).
+Never intentionally re-posts the same topic. Videos stay under ~60 seconds.
 """
 
 import logging
@@ -13,7 +11,6 @@ import shutil
 import sys
 import uuid
 
-from script_bank import pick_script
 from image_gen import generate_image
 from voice_gen import generate_narration
 from video_assemble import build_beat_clip, concat_clips
@@ -21,6 +18,7 @@ from safety_gate import check_content_safe
 from instagram_client import publish_reel
 from media_host import upload_to_public_host, delete_public_object, cleanup_old_media
 from cta import next_cta_beat
+from trend_script import generate_trend_script, record_used_topic
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pipeline")
@@ -29,15 +27,13 @@ WORK_DIR = os.path.join(os.path.dirname(__file__), "renders")
 os.makedirs(WORK_DIR, exist_ok=True)
 
 
-def build_caption(topic: str, source: str = "bank") -> str:
+def build_caption(topic: str, source: str = "trend") -> str:
     affiliate_link = os.environ.get("AFFILIATE_LINK", "")
     cta = "\n\nLink in bio \U0001f517" if affiliate_link else ""
     tags = (
-        "#history #ancientengineering #cosmicmysteries #didyouknow "
-        "#sciencefacts #ancienthistory #spacefacts"
+        "#history #sciencefacts #didyouknow #spacefacts "
+        "#ancienthistory #cosmicmysteries #trending"
     )
-    if source == "trend":
-        tags += " #trending #science"
     return f"{topic}\n.\n.\n{tags}{cta}"
 
 
@@ -53,28 +49,31 @@ def notify(message: str) -> None:
 
 
 def select_script() -> dict:
-    mode = os.environ.get("CONTENT_MODE", "bank").strip().lower()
+    """Always auto: unique trend script. Bank only as last-resort emergency."""
+    mode = os.environ.get("CONTENT_MODE", "auto").strip().lower()
     log.info("CONTENT_MODE=%s", mode)
 
-    if mode in ("trend", "auto"):
+    # Always try trend first (even if mode is bank — user wants unique always)
+    for attempt in range(2):
         try:
-            from trend_script import generate_trend_script
             script = generate_trend_script()
             if script:
                 return script
-            log.warning("Trend mode produced no script; falling back to script bank")
+            log.warning("Trend attempt %d produced no script", attempt + 1)
         except Exception as e:
-            log.warning("Trend pipeline failed (%s); falling back to script bank", e)
+            log.warning("Trend attempt %d failed: %s", attempt + 1, e)
 
-    script = pick_script()
-    script = dict(script)
+    # Emergency fallback only — still advances bank so we don't hard-crash
+    log.warning("Falling back to script bank (emergency only)")
+    from script_bank import pick_script
+    script = dict(pick_script())
     script["source"] = "bank"
     return script
 
 
 def run_once() -> None:
     script = select_script()
-    source = script.get("source", "bank")
+    source = script.get("source", "trend")
     log.info("Selected [%s]: %s", source, script["topic"])
 
     run_id = uuid.uuid4().hex[:8]
@@ -85,7 +84,7 @@ def run_once() -> None:
     full_narration = []
 
     try:
-        beats = list(script["beats"])
+        beats = list(script["beats"])[:4]  # hard cap educational beats
         cta = next_cta_beat()
         log.info("CTA set #%s: %s", cta.get("cta_index"), cta["on_screen_text"])
 
@@ -102,7 +101,7 @@ def run_once() -> None:
             full_narration.append(beat["narration"])
             log.info("Beat %d/%d done", i + 1, len(beats))
 
-        # Final CTA beat: spoken enthusiasm + short on-screen follow/like line
+        # Final CTA beat
         cta_i = len(beats)
         img_path = os.path.join(run_dir, f"beat{cta_i}.png")
         audio_path = os.path.join(run_dir, f"beat{cta_i}.mp3")
@@ -119,8 +118,9 @@ def run_once() -> None:
         log.info("Assembled: %s", final_path)
 
         caption = build_caption(script["topic"], source=source)
-        # Safety check on educational content only (not the marketing CTA)
-        safe, reason = check_content_safe(caption, " ".join(full_narration[:-1]) or " ".join(full_narration))
+        safe, reason = check_content_safe(
+            caption, " ".join(full_narration[:-1]) or " ".join(full_narration)
+        )
         if not safe:
             log.error("Safety gate blocked this post: %s", reason)
             notify(f"⚠️ Safety gate blocked post: {script['topic']}\nReason: {reason}")
@@ -132,6 +132,11 @@ def run_once() -> None:
 
         if media_id:
             log.info("Published: %s", media_id)
+            # Mark topic used only after successful publish
+            try:
+                record_used_topic(script["topic"])
+            except Exception as e:
+                log.warning("Could not record used topic: %s", e)
             notify(f"✅ Published Reel [{source}]: {script['topic']}\nmedia_id={media_id}")
             try:
                 delete_public_object(video_url)
