@@ -1,7 +1,6 @@
 """
-Run this once a day (via cron/GitHub Actions) to generate and publish one
-Reel. Fully automatic, no human approval step, by design -- the only gate
-is the automated safety_gate check.
+Generate and publish one Reel. Scheduled twice daily via GitHub Actions.
+Only gate is automated safety_gate (unless SKIP_SAFETY_GATE=1).
 """
 
 import logging
@@ -16,7 +15,7 @@ from voice_gen import generate_narration
 from video_assemble import build_beat_clip, concat_clips
 from safety_gate import check_content_safe
 from instagram_client import publish_reel
-from media_host import upload_to_public_host
+from media_host import upload_to_public_host, delete_public_object, cleanup_old_media
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pipeline")
@@ -56,6 +55,7 @@ def run_once() -> None:
 
     clip_paths = []
     full_narration = []
+    video_url = None
 
     try:
         for i, beat in enumerate(script["beats"]):
@@ -80,7 +80,7 @@ def run_once() -> None:
         if not safe:
             log.error("Safety gate blocked this post: %s", reason)
             notify(f"⚠️ Safety gate blocked post: {script['topic']}\nReason: {reason}")
-            sys.exit(2)  # red job = not published
+            sys.exit(2)
 
         video_url = upload_to_public_host(final_path)
         log.info("Uploaded: %s", video_url)
@@ -89,9 +89,20 @@ def run_once() -> None:
         if media_id:
             log.info("Published: %s", media_id)
             notify(f"✅ Published Reel: {script['topic']}\nmedia_id={media_id}")
+            # Instagram has already fetched the file — free R2 storage
+            try:
+                delete_public_object(video_url)
+                cleanup_old_media()
+            except Exception as e:
+                log.warning("R2 cleanup warning (non-fatal): %s", e)
         else:
             log.error("Publish failed (container never reached FINISHED).")
             notify(f"❌ Publish failed for: {script['topic']}")
+            # Still prune old objects so failed retries don't fill the bucket
+            try:
+                cleanup_old_media()
+            except Exception as e:
+                log.warning("R2 cleanup warning: %s", e)
             sys.exit(3)
     except Exception as e:
         log.exception("Pipeline failed")

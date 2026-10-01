@@ -1,9 +1,8 @@
 name: Reply to comments
 
-# SCHEDULES DISABLED until backend is fully set.
 on:
-  # schedule:
-  #   - cron: "*/30 * * * *"
+  schedule:
+    - cron: "0 */2 * * *"   # every 2 hours
   workflow_dispatch: {}
 
 permissions:
@@ -27,12 +26,20 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
         run: python run_comment_bot.py
 
       - name: Persist replied-comment state
+        if: always()
         run: |
           git config user.name "reels-agent-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add replied_comments.json
-          git diff --cached --quiet || git commit -m "chore: update replied-comments state"
-          git push
+          git pull --rebase origin main || true
+          git add replied_comments.json || true
+          if git diff --cached --quiet; then
+            echo "No state change"
+          else
+            git commit -m "chore: update replied-comments state"
+            git pull --rebase origin main
+            git push
+          fi

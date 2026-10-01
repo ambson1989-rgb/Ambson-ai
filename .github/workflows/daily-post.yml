@@ -1,9 +1,12 @@
 name: Daily reel post
 
-# SCHEDULES DISABLED until a full publish succeeds on latest main.
+# Two posts per day (IST):
+#   08:00 IST = 02:30 UTC
+#   20:00 IST = 14:30 UTC
 on:
-  # schedule:
-  #   - cron: "30 9 * * *"
+  schedule:
+    - cron: "30 2 * * *"   # morning IST
+    - cron: "30 14 * * *"  # evening IST
   workflow_dispatch: {}
 
 permissions:
@@ -51,6 +54,7 @@ jobs:
           PUBLIC_MEDIA_ENDPOINT: ${{ secrets.PUBLIC_MEDIA_ENDPOINT }}
           PUBLIC_MEDIA_REGION: ${{ secrets.PUBLIC_MEDIA_REGION }}
           PUBLIC_MEDIA_PREFIX: ${{ secrets.PUBLIC_MEDIA_PREFIX }}
+          R2_KEEP_OBJECTS: ${{ secrets.R2_KEEP_OBJECTS }}
           AFFILIATE_LINK: ${{ secrets.AFFILIATE_LINK }}
           NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
           CLEANUP_RENDERS: "1"
