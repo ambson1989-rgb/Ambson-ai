@@ -1,6 +1,6 @@
 """
 Generate and publish one unique Reel every run.
-Trend/Gemini only — no script-bank fallback (prevents old Reels repeating).
+Trend/LLM only — growth captions + hard hooks + no bank fallback.
 """
 
 import logging
@@ -16,6 +16,7 @@ from safety_gate import check_content_safe
 from instagram_client import publish_reel
 from media_host import upload_to_public_host, delete_public_object, cleanup_old_media
 from cta import next_cta_beat
+from engagement import build_growth_caption
 from trend_script import generate_trend_script, record_used_topic, is_topic_used
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -26,13 +27,9 @@ os.makedirs(WORK_DIR, exist_ok=True)
 
 
 def build_caption(topic: str, source: str = "trend") -> str:
-    affiliate_link = os.environ.get("AFFILIATE_LINK", "")
-    cta = "\n\nLink in bio \U0001f517" if affiliate_link else ""
-    tags = (
-        "#history #sciencefacts #didyouknow #spacefacts "
-        "#ancienthistory #cosmicmysteries #trending"
-    )
-    return f"{topic}\n.\n.\n{tags}{cta}"
+    caption = build_growth_caption(topic)
+    log.info("Caption niche/engage ready (%d chars)", len(caption))
+    return caption
 
 
 def notify(message: str) -> None:
@@ -47,7 +44,6 @@ def notify(message: str) -> None:
 
 
 def select_script() -> dict:
-    """Only unique trend/Gemini scripts. Never fall back to bank."""
     mode = os.environ.get("CONTENT_MODE", "auto").strip().lower()
     log.info("CONTENT_MODE=%s", mode)
 
@@ -66,8 +62,8 @@ def select_script() -> dict:
         except Exception as e:
             log.warning("Trend attempt %d failed: %s", attempt + 1, e)
 
-    log.error("Could not produce a unique script after 3 attempts — aborting (no bank fallback)")
-    notify("❌ Pipeline aborted: could not generate a unique topic (bank disabled to prevent repeats)")
+    log.error("Could not produce a unique script after 3 attempts — aborting")
+    notify("❌ Pipeline aborted: could not generate a unique topic")
     sys.exit(4)
 
 
@@ -76,7 +72,6 @@ def run_once() -> None:
     source = script.get("source", "trend")
     topic = script["topic"]
 
-    # Final guard before any rendering
     if is_topic_used(topic):
         log.error("Refusing to post already-used topic: %s", topic)
         notify(f"❌ Blocked duplicate topic: {topic}")
