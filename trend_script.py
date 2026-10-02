@@ -1,5 +1,6 @@
 """
 Unique short Reel scripts from niche trends (+ Gemini invent fallback).
+Never returns a topic already in used_topics.
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ HARD LIMITS:
 - Accurate, cautious. Breaking news: "reports say" / "scientists published".
 - No medical/financial/legal advice. No attacks on living private people.
 - image_prompt: cinematic, no people, vertical, no text in image.
+- NEVER write about Tesla Wardenclyffe, Antikythera mechanism, or pigeon CMB discovery
+  unless those are not on the avoid list — prefer fresh science/history angles.
 
 Respond with ONLY valid JSON:
 {"topic": "short title under 90 chars", "beats": [{"narration": "...", "image_prompt": "..."}]}
@@ -73,20 +76,40 @@ def _normalize_topic(topic: str) -> str:
     return t[:100]
 
 
+def _topic_keys(topic: str) -> set[str]:
+    """Normalize + extract distinctive keyword chunks for fuzzy match."""
+    norm = _normalize_topic(topic)
+    keys = {norm}
+    # Distinctive multi-word anchors
+    for phrase in (
+        "wardenclyffe", "tesla", "antikythera", "pigeon", "cosmic microwave",
+        "baghdad battery", "voynich", "great pyramid", "otzi", "iceman",
+        "alexandria", "pulsar", "tunguska", "roman concrete", "pioneer anomaly",
+        "gobekli", "greek fire", "stick insect", "magnetar",
+    ):
+        if phrase in norm:
+            keys.add(phrase)
+    return keys
+
+
 def _used_topics() -> set[str]:
     state = _load_state()
-    return {_normalize_topic(x) for x in (state.get("used_topics") or []) if x}
+    used: set[str] = set()
+    for x in state.get("used_topics") or []:
+        used |= _topic_keys(str(x))
+    return used
 
 
 def is_topic_used(topic: str) -> bool:
-    norm = _normalize_topic(topic)
-    if not norm:
-        return False
+    keys = _topic_keys(topic)
     used = _used_topics()
-    if norm in used:
+    if not keys:
+        return False
+    if keys & used:
         return True
+    norm = _normalize_topic(topic)
     for u in used:
-        if len(u) > 15 and (norm in u or u in norm):
+        if len(u) > 12 and (norm in u or u in norm):
             return True
     return False
 
@@ -94,7 +117,8 @@ def is_topic_used(topic: str) -> bool:
 def record_used_topic(topic: str) -> None:
     state = _load_state()
     used = list(state.get("used_topics") or [])
-    used.append(topic)
+    if topic not in used:
+        used.append(topic)
     used = used[-USED_TOPICS_MAX:]
     _save_state({"used_topics": used})
 
@@ -151,7 +175,7 @@ def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM,
                     max_output_tokens=900,
-                    temperature=0.6,
+                    temperature=0.7,
                 ),
             )
             raw = (response.text or "").strip()
@@ -161,7 +185,7 @@ def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
                 log.warning("Invalid JSON from %s: %s", model, raw[:180])
                 continue
             if is_topic_used(script["topic"]):
-                log.warning("Topic already used: %s", script["topic"])
+                log.warning("Topic already used (rejected): %s", script["topic"])
                 continue
             log.info("Script topic: %s (%d beats)", script["topic"], len(script["beats"]))
             return script
@@ -174,13 +198,12 @@ def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
 
 
 def generate_trend_script() -> dict[str, Any] | None:
-    used = _used_topics()
-    used_sample = list(used)[-20:]
+    used = list(_load_state().get("used_topics") or [])
     avoid = ""
-    if used_sample:
+    if used:
         avoid = (
-            "\n\nDo NOT reuse these already-posted topics:\n"
-            + "\n".join(f"- {u}" for u in used_sample)
+            "\n\nDo NOT reuse ANY of these already-posted topics (or close variants):\n"
+            + "\n".join(f"- {u}" for u in used[-40:])
         )
 
     trends = fetch_niche_trends(max_items=15)
@@ -191,7 +214,7 @@ def generate_trend_script() -> dict[str, Any] | None:
         lines = [f"{i}. [{t['subreddit']}] {t['title']}" for i, t in enumerate(fresh[:10], 1)]
         prompt = (
             "Pick ONE fresh headline for a short educational Reel (history/science/space). "
-            "Avoid politics and memes. Must be unique.\n\n"
+            "Avoid politics and memes. Must be unique — never a repeat.\n\n"
             + "\n".join(lines)
             + avoid
             + "\n\nWrite the Reel script JSON (3–4 short beats)."
@@ -200,12 +223,11 @@ def generate_trend_script() -> dict[str, Any] | None:
         if script:
             return script
 
-    # Gemini invents a unique classic-fact angle when feeds fail
-    log.warning("Trend feeds thin or blocked — asking Gemini for a unique educational topic")
+    log.warning("Asking Gemini to invent a unique educational topic")
     invent = (
         "Invent ONE unique educational Reel topic in history, archaeology, space, or hard science. "
-        "Prefer surprising well-established facts that are NOT already in this list.\n"
+        "Prefer surprising well-established facts.\n"
         + avoid
-        + "\n\nWrite the Reel script JSON (3–4 short beats). Make the topic clearly different from past posts."
+        + "\n\nWrite the Reel script JSON (3–4 short beats). Topic must be clearly different from the avoid list."
     )
     return _generate_from_prompt(invent)
