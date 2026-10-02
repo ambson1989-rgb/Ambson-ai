@@ -26,7 +26,8 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
-          # Up to 10 replies per manual run; scan last 25 posts
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
           COMMENT_MAX_REPLIES: "10"
           COMMENT_MEDIA_LIMIT: "25"
           COMMENT_MIN_DELAY_SEC: "30"

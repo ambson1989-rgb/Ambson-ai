@@ -1,5 +1,6 @@
 """
-Unique short Reel scripts from niche trends (+ Gemini invent fallback).
+Unique short Reel scripts from niche trends.
+Uses Gemini, falls back to DeepSeek when Gemini fails.
 Never returns a topic already in used_topics.
 """
 
@@ -11,27 +12,13 @@ import os
 import re
 from typing import Any
 
-from google import genai
-from google.genai import types
-
 from trend_scout import fetch_niche_trends
+from llm_client import generate_text
 
 log = logging.getLogger("trend_script")
 
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 STATE_FILE = os.path.join(os.path.dirname(__file__), "script_state.json")
 USED_TOPICS_MAX = int(os.environ.get("USED_TOPICS_MAX", "500"))
-
-_DEFAULT_MODELS = [
-    os.environ.get("GEMINI_MODEL", "").strip(),
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-]
-_seen: set[str] = set()
-MODEL_CANDIDATES = [m for m in _DEFAULT_MODELS if m and not (m in _seen or _seen.add(m))]
 
 SYSTEM = """You write SHORT vertical Instagram Reels (history / science / space / archaeology).
 
@@ -77,15 +64,14 @@ def _normalize_topic(topic: str) -> str:
 
 
 def _topic_keys(topic: str) -> set[str]:
-    """Normalize + extract distinctive keyword chunks for fuzzy match."""
     norm = _normalize_topic(topic)
     keys = {norm}
-    # Distinctive multi-word anchors
     for phrase in (
         "wardenclyffe", "tesla", "antikythera", "pigeon", "cosmic microwave",
         "baghdad battery", "voynich", "great pyramid", "otzi", "iceman",
         "alexandria", "pulsar", "tunguska", "roman concrete", "pioneer anomaly",
-        "gobekli", "greek fire", "stick insect", "magnetar",
+        "gobekli", "greek fire", "stick insect", "magnetar", "helium",
+        "superfluid", "quantum",
     ):
         if phrase in norm:
             keys.add(phrase)
@@ -165,36 +151,21 @@ def _validate_script(data: dict) -> dict | None:
 
 
 def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
-    last_err = None
-    for model in MODEL_CANDIDATES:
-        try:
-            log.info("Generating script with %s", model)
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM,
-                    max_output_tokens=900,
-                    temperature=0.7,
-                ),
-            )
-            raw = (response.text or "").strip()
-            data = _extract_json(raw)
-            script = _validate_script(data) if data else None
-            if not script:
-                log.warning("Invalid JSON from %s: %s", model, raw[:180])
-                continue
-            if is_topic_used(script["topic"]):
-                log.warning("Topic already used (rejected): %s", script["topic"])
-                continue
-            log.info("Script topic: %s (%d beats)", script["topic"], len(script["beats"]))
-            return script
-        except Exception as e:
-            last_err = e
-            log.warning("Model %s failed: %s", model, e)
-    if last_err:
-        log.error("Generation failed: %s", last_err)
-    return None
+    try:
+        raw = generate_text(SYSTEM, prompt, max_tokens=900, temperature=0.7)
+    except Exception as e:
+        log.error("Script LLM failed: %s", e)
+        return None
+    data = _extract_json(raw)
+    script = _validate_script(data) if data else None
+    if not script:
+        log.warning("Invalid script JSON: %s", (raw or "")[:180])
+        return None
+    if is_topic_used(script["topic"]):
+        log.warning("Topic already used (rejected): %s", script["topic"])
+        return None
+    log.info("Script topic: %s (%d beats)", script["topic"], len(script["beats"]))
+    return script
 
 
 def generate_trend_script() -> dict[str, Any] | None:
@@ -223,7 +194,7 @@ def generate_trend_script() -> dict[str, Any] | None:
         if script:
             return script
 
-    log.warning("Asking Gemini to invent a unique educational topic")
+    log.warning("Asking LLM to invent a unique educational topic")
     invent = (
         "Invent ONE unique educational Reel topic in history, archaeology, space, or hard science. "
         "Prefer surprising well-established facts.\n"
