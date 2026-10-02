@@ -1,5 +1,6 @@
 """
-Manual comment replies. Logs clearly when nothing is found.
+Manual-only comment bot entrypoint.
+Scans recent posts, finds unreplied comments, replies by rules, likes praise.
 """
 
 import logging
@@ -13,7 +14,8 @@ from comment_bot import process_media_comments
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("comment_bot")
 
-RECENT_MEDIA_LIMIT = int(os.environ.get("COMMENT_MEDIA_LIMIT", "10"))
+# Scan more posts so "all that need reply" are covered when you run manually
+RECENT_MEDIA_LIMIT = int(os.environ.get("COMMENT_MEDIA_LIMIT", "25"))
 MAX_REPLIES = int(os.environ.get("COMMENT_MAX_REPLIES", "10"))
 
 
@@ -40,16 +42,17 @@ def get_recent_media() -> list[dict]:
             m.get("comments_count"),
             cap,
         )
+    # Prefer posts that already have comments
+    data.sort(key=lambda m: int(m.get("comments_count") or 0), reverse=True)
     return data
 
 
 def run_once() -> None:
     budget = MAX_REPLIES
     log.info(
-        "Comment bot starting (max %d replies, scan %d media, ig_user=%s)",
+        "Comment bot MANUAL run (max %d replies, scan up to %d media)",
         budget,
         RECENT_MEDIA_LIMIT,
-        IG_USER_ID[:6] + "…" if len(IG_USER_ID) > 6 else IG_USER_ID,
     )
 
     try:
@@ -59,15 +62,17 @@ def run_once() -> None:
         raise
 
     if not media_list:
-        log.warning(
-            "No media returned. Check IG_USER_ID and that the token can read this account's posts."
-        )
+        log.warning("No media returned. Check IG_USER_ID / token permissions.")
         return
 
     total = 0
     for m in media_list:
         if budget <= 0:
             break
+        # Skip empty threads to save API calls
+        if int(m.get("comments_count") or 0) == 0:
+            log.info("  skip media %s (comments_count=0)", m["id"])
+            continue
         media_id = m["id"]
         count = process_media_comments(media_id, budget)
         budget -= count
@@ -77,11 +82,8 @@ def run_once() -> None:
 
     if total == 0:
         log.warning(
-            "No replies sent. Possible reasons: "
-            "(1) posts have no comments yet, "
-            "(2) missing instagram_business_manage_comments permission, "
-            "(3) comments_count is 0 on all scanned posts, "
-            "(4) all comments already replied."
+            "No replies sent. Check: comments exist, manage_comments permission, "
+            "or all eligible comments already replied."
         )
     else:
         log.info("Comment bot finished — %d reply(ies) sent", total)

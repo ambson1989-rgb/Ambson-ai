@@ -1,6 +1,15 @@
 """
-Reply to comments; like appreciative ones.
+Manual comment engagement (workflow_dispatch only).
+
+Rules:
+  - Like appreciative comments (love, wow, 🔥, etc.)
+  - Reply to questions and meaningful comments (max per run)
+  - Short, warm, human one-liners via Gemini
+  - Never re-reply the same comment id
+  - Slow delays between actions to reduce IG integrity checks
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -18,26 +27,39 @@ client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 STATE_FILE = os.path.join(os.path.dirname(__file__), "replied_comments.json")
 LIKED_STATE_FILE = os.path.join(os.path.dirname(__file__), "liked_comments.json")
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "") or "gemini-3.5-flash-lite"
 MIN_DELAY = int(os.environ.get("COMMENT_MIN_DELAY_SEC", "30"))
 MAX_DELAY = int(os.environ.get("COMMENT_MAX_DELAY_SEC", "90"))
 
-# Simple positive signals (emoji + words)
 APPRECIATIVE = re.compile(
     r"(\b(love|loved|amazing|awesome|great|wow|cool|nice|beautiful|brilliant|"
     r"fascinating|interesting|mind.?blown|incredible|fantastic|super|thanks|"
-    r"thank you|good one|well done|respect|fire|lit)\b)|"
+    r"thank you|good one|well done|respect|fire|lit|omg|true|facts)\b)|"
     r"([❤🧡💛💚💙💜💕💖💗💘💝♥🔥👏🙌😍🤩😊👍✨⭐🌟💯🎉])",
     re.I,
 )
 
-SYSTEM_PROMPT = """You reply to Instagram comments on a history/science fact account.
-Keep replies short (one sentence), warm, and human.
+QUESTION = re.compile(
+    r"(\?|\b(what|why|how|when|where|who|which|is it|are you|can you|did|does|"
+    r"do you|really|true|source|explain|mean)\b)",
+    re.I,
+)
+
+SPAM = re.compile(
+    r"\b(follow me|check (my|out)|dm me|onlyfans|crypto|giveaway|click (here|link)|"
+    r"subscribe|promo code)\b",
+    re.I,
+)
+
+SYSTEM_PROMPT = """You reply to Instagram comments on a history/science fact Reel account.
+Keep replies short (ONE sentence), warm, and human — like a creator tapping reply between posts.
+
 Rules:
-- One short sentence.
-- Thank-you or light reaction is enough.
-- If asked if you're a bot/AI, answer briefly and honestly.
-- Spam/hate: short neutral thanks only.
+- One short sentence only. No hashtags. No links.
+- Questions: answer helpfully in plain words if you can; if unsure, invite them to stay for more facts.
+- Praise/thanks: brief warm acknowledgment.
+- If asked if you're a bot/AI: answer briefly and honestly.
+- Spam/hate: do not engage substantively — output exactly: Thanks for watching!
 - Output ONLY the reply text."""
 
 
@@ -45,7 +67,9 @@ def _load_ids(path: str) -> set:
     if os.path.exists(path):
         try:
             with open(path) as f:
-                return set(json.load(f))
+                data = json.load(f)
+            if isinstance(data, list):
+                return set(data)
         except (json.JSONDecodeError, OSError):
             pass
     return set()
@@ -53,17 +77,49 @@ def _load_ids(path: str) -> set:
 
 def _save_ids(path: str, ids: set) -> None:
     with open(path, "w") as f:
-        json.dump(list(ids), f)
+        json.dump(sorted(ids), f, indent=2)
 
 
 def is_appreciative(text: str) -> bool:
     return bool(APPRECIATIVE.search(text or ""))
 
 
+def is_question(text: str) -> bool:
+    return bool(QUESTION.search(text or ""))
+
+
+def is_spam(text: str) -> bool:
+    return bool(SPAM.search(text or ""))
+
+
+def needs_reply(text: str) -> bool:
+    """True if this comment should get a text reply."""
+    t = (text or "").strip()
+    if not t or len(t) < 2:
+        return False
+    if is_spam(t):
+        return False
+    # Prefer questions and real engagement; still thank pure praise
+    if is_question(t) or is_appreciative(t):
+        return True
+    # Longer thoughtful comments without spam
+    if len(t) >= 12:
+        return True
+    return False
+
+
+def priority(text: str) -> int:
+    """Lower = handle first."""
+    if is_question(text):
+        return 0
+    if is_appreciative(text):
+        return 1
+    return 2
+
+
 def generate_reply(comment_text: str) -> str:
-    model = GEMINI_MODEL or "gemini-3.5-flash-lite"
     response = client.models.generate_content(
-        model=model,
+        model=GEMINI_MODEL,
         contents=f"Comment: {comment_text}",
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
@@ -91,28 +147,42 @@ def process_media_comments(media_id: str, budget: int) -> int:
         return 0
 
     log.info("Media %s: %d comment(s) from API", media_id, len(comments))
-    count = 0
 
+    # Sort: questions first, then appreciative, then other
+    pending = []
     for comment in comments:
-        if count >= budget:
-            break
         cid = comment.get("id")
         text = (comment.get("text") or "").strip()
         username = comment.get("username") or ""
         if not cid or not text:
             continue
+        pending.append((priority(text), comment))
+    pending.sort(key=lambda x: x[0])
 
-        # Like appreciative comments (even if we already replied earlier)
+    count = 0
+    for _, comment in pending:
+        if count >= budget:
+            break
+        cid = comment["id"]
+        text = (comment.get("text") or "").strip()
+        username = comment.get("username") or ""
+
+        # Like appreciative (even if already replied)
         if is_appreciative(text) and cid not in liked_ids:
             try:
                 if like_comment(cid):
                     liked_ids.add(cid)
-                    log.info("  Liked appreciative comment from @%s: %r", username, text[:60])
+                    log.info("  Liked @%s: %r", username, text[:60])
+                    time.sleep(random.randint(5, 15))
             except Exception as e:
                 log.warning("  Like failed for %s: %s", cid, e)
 
         if cid in replied_ids:
             log.info("  skip already-replied %s", cid)
+            continue
+
+        if not needs_reply(text):
+            log.info("  skip (no reply needed): @%s %r", username, text[:40])
             continue
 
         try:
