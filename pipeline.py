@@ -1,6 +1,5 @@
 """
 Generate and publish one unique Reel every run.
-Trend/LLM only — growth captions + hard hooks + no bank fallback.
 """
 
 import logging
@@ -125,6 +124,11 @@ def run_once() -> None:
         )
         if not safe:
             log.error("Safety gate blocked this post: %s", reason)
+            # Mark used so the next run does not rebuild the same medical/risky topic
+            try:
+                record_used_topic(topic)
+            except Exception as e:
+                log.warning("Could not record blocked topic: %s", e)
             notify(f"⚠️ Safety gate blocked post: {topic}\nReason: {reason}")
             sys.exit(2)
 

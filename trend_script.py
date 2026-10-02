@@ -1,6 +1,5 @@
 """
-Unique short Reel scripts from niche trends.
-Hard-hook openings for retention. Gemini → DeepSeek fallback.
+Unique short Reel scripts. Avoids medical/disease topics.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ log = logging.getLogger("trend_script")
 STATE_FILE = os.path.join(os.path.dirname(__file__), "script_state.json")
 USED_TOPICS_MAX = int(os.environ.get("USED_TOPICS_MAX", "500"))
 
-SYSTEM = """You write SHORT vertical Instagram Reels (history / science / space / archaeology).
+SYSTEM = """You write SHORT vertical Instagram Reels (history / science / space / archaeology / nature / physics).
 Goal: stop the scroll, teach one surprising fact, drive follows.
 
 HARD LIMITS:
@@ -27,18 +26,18 @@ HARD LIMITS:
 - Each narration: ONE short sentence, max 18 words.
 - Under ~45 seconds of speech total for educational beats.
 - Accurate, cautious. Breaking news: "reports say" / "scientists published".
-- No medical/financial/legal advice. No attacks on living private people.
 - image_prompt: cinematic, no people, vertical, no text in image.
 
-HOOK RULES (critical for views):
-- Beat 1 MUST be a scroll-stopping HOOK — not a soft intro.
-- Good hooks: a shocking claim, a paradox, a "scientists were wrong" angle,
-  or a direct question the viewer wants answered.
-- Bad hooks: "Today we talk about…", "Let's learn about…", "In this video…".
-- Beat 2–3 deliver the fact clearly.
-- Last educational beat can set up wonder ("and that's not even the wildest part" is OK once).
+FORBIDDEN TOPICS (never write about these):
+- Medical advice, diseases, treatments, genes-as-therapy, mental health disorders
+- Alzheimer's, cancer, diabetes, vaccines, clinical trials, patient outcomes
+- Financial or legal advice; attacks on living private people
+Prefer: space, archaeology, ancient tech, physics curiosities, animals, geology, classic science history.
 
-Avoid repeating Tesla Wardenclyffe, Antikythera, pigeon CMB, or any topic on the avoid list.
+HOOK RULES:
+- Beat 1 MUST be a scroll-stopping HOOK — not a soft intro.
+- Good: shock, paradox, "scientists were wrong", direct question.
+- Bad: "Today we talk about…", "Let's learn about…".
 
 Respond with ONLY valid JSON:
 {"topic": "short title under 90 chars", "beats": [{"narration": "...", "image_prompt": "..."}]}
@@ -78,7 +77,7 @@ def _topic_keys(topic: str) -> set[str]:
         "baghdad battery", "voynich", "great pyramid", "otzi", "iceman",
         "alexandria", "pulsar", "tunguska", "roman concrete", "pioneer anomaly",
         "gobekli", "greek fire", "stick insect", "magnetar", "helium",
-        "superfluid", "quantum",
+        "superfluid", "quantum", "alzheimer", "apoe",
     ):
         if phrase in norm:
             keys.add(phrase)
@@ -191,9 +190,10 @@ def generate_trend_script() -> dict[str, Any] | None:
             fresh = trends
         lines = [f"{i}. [{t['subreddit']}] {t['title']}" for i, t in enumerate(fresh[:10], 1)]
         prompt = (
-            "Pick ONE fresh headline for a short educational Reel (history/science/space). "
-            "Avoid politics and memes. Must be unique — never a repeat.\n"
-            "Write a HARD HOOK in beat 1 (shock, paradox, or question — no soft intros).\n\n"
+            "Pick ONE fresh headline for a short educational Reel "
+            "(space, archaeology, physics, nature, ancient tech — NOT medical/disease). "
+            "Avoid politics and memes. Must be unique.\n"
+            "Hard HOOK in beat 1.\n\n"
             + "\n".join(lines)
             + avoid
             + "\n\nWrite the Reel script JSON (3–4 short beats)."
@@ -204,10 +204,10 @@ def generate_trend_script() -> dict[str, Any] | None:
 
     log.warning("Asking LLM to invent a unique educational topic")
     invent = (
-        "Invent ONE unique educational Reel topic in history, archaeology, space, or hard science. "
-        "Prefer surprising well-established facts.\n"
+        "Invent ONE unique educational Reel topic in space, archaeology, physics, "
+        "nature, or classic science history — NOT medical or disease.\n"
         "Beat 1 must be a scroll-stopping hook.\n"
         + avoid
-        + "\n\nWrite the Reel script JSON (3–4 short beats). Topic must be clearly different from the avoid list."
+        + "\n\nWrite the Reel script JSON (3–4 short beats)."
     )
     return _generate_from_prompt(invent)

@@ -1,8 +1,6 @@
 """
 Find trending topics in history / science / space niches.
-
-Primary: public RSS feeds (work from GitHub Actions).
-Fallback: Reddit JSON (often 403 from cloud IPs).
+Filters out medical/disease headlines (Instagram + safety gate).
 """
 
 from __future__ import annotations
@@ -40,8 +38,16 @@ REDDIT_SUBS = [
     "Physics",
 ]
 
+# Skip NSFW + medical/disease (triggers safety gate + IG risk)
 BLOCK_WORDS = re.compile(
-    r"\b(nsfw|porn|onlyfans|giveaway|crypto\s*pump|hate\s*crime)\b",
+    r"\b("
+    r"nsfw|porn|onlyfans|giveaway|crypto\s*pump|hate\s*crime|"
+    r"alzheimer|dementia|cancer|diabetes|covid|vaccine|drug|therapy|"
+    r"treatment|patient|disease|disorder|symptom|clinical|medical|"
+    r"obesity|depression|anxiety|stroke|heart\s*disease|blood\s*pressure|"
+    r"diet\s+may|weight\s+loss|mental\s+health|gene\s+therapy|"
+    r"apoe|tumor|chemotherapy|antibiotic"
+    r")\b",
     re.I,
 )
 
@@ -57,11 +63,8 @@ def _rss_items(name: str, url: str, limit: int = 8) -> list[dict[str, Any]]:
             log.warning("RSS %s status %s", name, resp.status_code)
             return []
         root = ET.fromstring(resp.content)
-        # RSS 2.0 channel/item or Atom entry
         items = root.findall(".//item")
         if not items:
-            # Atom
-            ns = {"a": "http://www.w3.org/2005/Atom"}
             entries = root.findall(".//{http://www.w3.org/2005/Atom}entry") or root.findall(".//entry")
             out = []
             for e in entries[:limit]:
@@ -86,7 +89,6 @@ def _rss_items(name: str, url: str, limit: int = 8) -> list[dict[str, Any]]:
             title = (title_el.text or "").strip() if title_el is not None else ""
             if len(title) < 20 or BLOCK_WORDS.search(title):
                 continue
-            # Prefer fresher items slightly
             score = 40
             pub = item.find("pubDate")
             if pub is not None and pub.text:
