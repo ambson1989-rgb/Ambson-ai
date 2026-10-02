@@ -3,3 +3,4 @@ google-genai>=0.5
 edge-tts>=6.1
 python-dotenv>=1.0
 boto3>=1.34
+Pillow>=10.0
