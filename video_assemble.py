@@ -1,6 +1,7 @@
 """
-Assembles a Reel from beats (still + narration) with Ken Burns + captions.
-Enforces a max total duration so posts stay short and R2-friendly.
+Assembles a Reel from beats:
+  - still + Ken Burns, or
+  - real stock VIDEO (moving water, clouds, etc.) + narration + captions
 """
 
 import logging
@@ -12,8 +13,6 @@ log = logging.getLogger("video_assemble")
 
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "Montserrat-Bold.ttf")
 W, H, FPS = 1080, 1920, 30
-
-# Target: under 1 minute total (including CTA). Strong trends can stretch to this max.
 MAX_REEL_SECONDS = float(os.environ.get("MAX_REEL_SECONDS", "58"))
 
 
@@ -36,7 +35,18 @@ def _run_ffmpeg(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg failed (exit {proc.returncode}):\n{err}")
 
 
+def _drawtext_filter(caption_path: str) -> str:
+    font = FONT_PATH.replace("\\", "/").replace(":", "\\:")
+    cap = caption_path.replace("\\", "/").replace(":", "\\:")
+    return (
+        f"drawtext=fontfile={font}:textfile={cap}:fontsize=58:"
+        f"fontcolor=white:line_spacing=14:box=1:boxcolor=black@0.55:boxborderw=24:"
+        f"x=(w-text_w)/2:y=h-th-180"
+    )
+
+
 def build_beat_clip(image_path: str, audio_path: str, caption: str, out_path: str) -> str:
+    """Still image + Ken Burns + narration."""
     duration = _probe_duration(audio_path)
     frames = max(int(duration * FPS), 1)
 
@@ -44,17 +54,12 @@ def build_beat_clip(image_path: str, audio_path: str, caption: str, out_path: st
     with open(caption_path, "w") as f:
         f.write(_wrap_caption(caption))
 
-    font = FONT_PATH.replace("\\", "/").replace(":", "\\:")
-    cap = caption_path.replace("\\", "/").replace(":", "\\:")
-
     vf = (
         f"scale={W}:{H}:force_original_aspect_ratio=increase,"
         f"crop={W}:{H},"
         f"zoompan=z='min(zoom+0.0015,1.3)':d={frames}:s={W}x{H}:fps={FPS},"
         f"format=yuv420p,"
-        f"drawtext=fontfile={font}:textfile={cap}:fontsize=58:"
-        f"fontcolor=white:line_spacing=14:box=1:boxcolor=black@0.55:boxborderw=24:"
-        f"x=(w-text_w)/2:y=h-th-180"
+        f"{_drawtext_filter(caption_path)}"
     )
 
     try:
@@ -73,6 +78,52 @@ def build_beat_clip(image_path: str, audio_path: str, caption: str, out_path: st
     return out_path
 
 
+def build_video_beat_clip(video_path: str, audio_path: str, caption: str, out_path: str) -> str:
+    """
+    Real moving video (ocean, etc.) looped/trimmed to narration length.
+    Keeps natural motion — no Ken Burns on a still.
+    """
+    duration = _probe_duration(audio_path)
+
+    caption_path = out_path + ".caption.txt"
+    with open(caption_path, "w") as f:
+        f.write(_wrap_caption(caption))
+
+    # Loop input if short, scale/crop vertical, burn captions, replace audio with TTS
+    vf = (
+        f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+        f"crop={W}:{H},"
+        f"eq=contrast=1.04:saturation=1.06,"
+        f"format=yuv420p,"
+        f"{_drawtext_filter(caption_path)}"
+    )
+
+    try:
+        _run_ffmpeg(
+            [
+                "ffmpeg", "-y",
+                "-stream_loop", "-1",  # loop stock clip until we hit -t
+                "-i", video_path,
+                "-i", audio_path,
+                "-t", str(duration),
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-shortest",
+                "-movflags", "+faststart",
+                out_path,
+            ]
+        )
+    finally:
+        if os.path.exists(caption_path):
+            os.remove(caption_path)
+
+    log.info("Video beat clip: %s (%.1fs motion)", out_path, duration)
+    return out_path
+
+
 def concat_clips(clip_paths: list[str], out_path: str) -> str:
     list_path = out_path + ".list.txt"
     with open(list_path, "w") as f:
@@ -87,7 +138,6 @@ def concat_clips(clip_paths: list[str], out_path: str) -> str:
         if os.path.exists(list_path):
             os.remove(list_path)
 
-    # Enforce max length (keep under 1 min; R2-friendly small files)
     try:
         dur = _probe_duration(out_path)
         log.info("Assembled duration: %.1fs (max %.0fs)", dur, MAX_REEL_SECONDS)

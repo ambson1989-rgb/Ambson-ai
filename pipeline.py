@@ -1,6 +1,7 @@
 """
 Generate and publish one unique Reel every run.
-Modes: educational facts (default) or scenic places (licensed stock + BGM).
+Facts: AI images + motion stock video when water/sky/etc. need natural movement.
+Scenic: full travel stock video + BGM.
 """
 
 import logging
@@ -11,13 +12,14 @@ import uuid
 
 from image_gen import generate_image
 from voice_gen import generate_narration
-from video_assemble import build_beat_clip, concat_clips
+from video_assemble import build_beat_clip, build_video_beat_clip, concat_clips
 from safety_gate import check_content_safe
 from instagram_client import publish_reel
 from media_host import upload_to_public_host, delete_public_object, cleanup_old_media
 from cta import next_cta_beat
 from engagement import build_growth_caption
 from trend_script import generate_trend_script, record_used_topic, is_topic_used
+from stock_video import find_motion_clip, download_clip
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pipeline")
@@ -51,7 +53,6 @@ def _want_scenic() -> bool:
         return True
     if mode in ("trend", "bank", "facts"):
         return False
-    # auto: roughly every 3rd post is scenic (if keys present)
     try:
         from cta import _load_state
         post_count = int((_load_state() or {}).get("post_count", 0))
@@ -88,6 +89,42 @@ def select_script() -> dict:
     sys.exit(4)
 
 
+def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = None) -> tuple[str, str]:
+    """
+    Prefer real motion video for ocean/water/sky/etc.; else AI still + Ken Burns.
+    Returns (clip_path, narration_text).
+    """
+    narration = beat["narration"]
+    prompt = beat.get("image_prompt") or ""
+    caption = on_screen if on_screen is not None else narration
+
+    audio_path = os.path.join(run_dir, f"beat{i}.mp3")
+    clip_path = os.path.join(run_dir, f"beat{i}.mp4")
+    generate_narration(narration, audio_path)
+
+    motion = None
+    try:
+        motion = find_motion_clip(prompt)
+    except Exception as e:
+        log.warning("Motion search error: %s", e)
+
+    if motion:
+        try:
+            raw_vid = os.path.join(run_dir, f"beat{i}_stock.mp4")
+            download_clip(motion["url"], raw_vid)
+            build_video_beat_clip(raw_vid, audio_path, caption, clip_path)
+            log.info("Beat %d: LIVE VIDEO (%s)", i, motion["source"])
+            return clip_path, narration
+        except Exception as e:
+            log.warning("Motion video beat failed, falling back to still: %s", e)
+
+    img_path = os.path.join(run_dir, f"beat{i}.png")
+    generate_image(prompt, img_path)
+    build_beat_clip(img_path, audio_path, caption, clip_path)
+    log.info("Beat %d: still + Ken Burns", i)
+    return clip_path, narration
+
+
 def run_scenic(run_dir: str) -> None:
     from scenic_gen import build_scenic_reel
 
@@ -96,14 +133,9 @@ def run_scenic(run_dir: str) -> None:
     final_path = result["final_path"]
 
     if is_topic_used(topic):
-        # Slightly uniquify with stock id
         topic = f"{topic} · {result['stock'].get('id')}"
 
-    caption = build_caption(
-        topic,
-        source="scenic",
-        extra=result.get("credit", ""),
-    )
+    caption = build_caption(topic, source="scenic", extra=result.get("credit", ""))
     safe, reason = check_content_safe(caption, result.get("narration_text", topic))
     if not safe:
         log.error("Safety gate blocked scenic: %s", reason)
@@ -161,27 +193,21 @@ def run_facts() -> None:
         log.info("CTA set #%s: %s", cta.get("cta_index"), cta["on_screen_text"])
 
         for i, beat in enumerate(beats):
-            img_path = os.path.join(run_dir, f"beat{i}.png")
-            audio_path = os.path.join(run_dir, f"beat{i}.mp3")
-            clip_path = os.path.join(run_dir, f"beat{i}.mp4")
-
-            generate_image(beat["image_prompt"], img_path)
-            generate_narration(beat["narration"], audio_path)
-            build_beat_clip(img_path, audio_path, beat["narration"], clip_path)
-
+            clip_path, narration = _build_one_beat(beat, run_dir, i)
             clip_paths.append(clip_path)
-            full_narration.append(beat["narration"])
+            full_narration.append(narration)
             log.info("Beat %d/%d done", i + 1, len(beats))
 
         cta_i = len(beats)
-        img_path = os.path.join(run_dir, f"beat{cta_i}.png")
-        audio_path = os.path.join(run_dir, f"beat{cta_i}.mp3")
-        clip_path = os.path.join(run_dir, f"beat{cta_i}.mp4")
-        generate_image(cta["image_prompt"], img_path)
-        generate_narration(cta["narration"], audio_path)
-        build_beat_clip(img_path, audio_path, cta["on_screen_text"], clip_path)
+        cta_beat = {
+            "narration": cta["narration"],
+            "image_prompt": cta["image_prompt"],
+        }
+        clip_path, narration = _build_one_beat(
+            cta_beat, run_dir, cta_i, on_screen=cta["on_screen_text"]
+        )
         clip_paths.append(clip_path)
-        full_narration.append(cta["narration"])
+        full_narration.append(narration)
         log.info("CTA beat done")
 
         final_path = os.path.join(run_dir, "final.mp4")
