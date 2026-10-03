@@ -1,5 +1,6 @@
 """
 Generate and publish one unique Reel every run.
+Modes: educational facts (default) or scenic places (licensed stock + BGM).
 """
 
 import logging
@@ -25,9 +26,11 @@ WORK_DIR = os.path.join(os.path.dirname(__file__), "renders")
 os.makedirs(WORK_DIR, exist_ok=True)
 
 
-def build_caption(topic: str, source: str = "trend") -> str:
+def build_caption(topic: str, source: str = "trend", extra: str = "") -> str:
     caption = build_growth_caption(topic)
-    log.info("Caption niche/engage ready (%d chars)", len(caption))
+    if extra:
+        caption = f"{caption}\n\n{extra}"
+    log.info("Caption ready (%d chars)", len(caption))
     return caption
 
 
@@ -40,6 +43,25 @@ def notify(message: str) -> None:
         requests.post(url, json={"content": message[:1900]}, timeout=15)
     except Exception as e:
         log.warning("Notify webhook failed: %s", e)
+
+
+def _want_scenic() -> bool:
+    mode = os.environ.get("CONTENT_MODE", "auto").strip().lower()
+    if mode == "scenic":
+        return True
+    if mode in ("trend", "bank", "facts"):
+        return False
+    # auto: roughly every 3rd post is scenic (if keys present)
+    try:
+        from cta import _load_state
+        post_count = int((_load_state() or {}).get("post_count", 0))
+    except Exception:
+        post_count = 0
+    has_stock = bool(
+        os.environ.get("PEXELS_API_KEY", "").strip()
+        or os.environ.get("PIXABAY_API_KEY", "").strip()
+    )
+    return has_stock and (post_count % 3 == 2)
 
 
 def select_script() -> dict:
@@ -66,14 +88,62 @@ def select_script() -> dict:
     sys.exit(4)
 
 
-def run_once() -> None:
+def run_scenic(run_dir: str) -> None:
+    from scenic_gen import build_scenic_reel
+
+    result = build_scenic_reel(run_dir)
+    topic = result["topic"]
+    final_path = result["final_path"]
+
+    if is_topic_used(topic):
+        # Slightly uniquify with stock id
+        topic = f"{topic} · {result['stock'].get('id')}"
+
+    caption = build_caption(
+        topic,
+        source="scenic",
+        extra=result.get("credit", ""),
+    )
+    safe, reason = check_content_safe(caption, result.get("narration_text", topic))
+    if not safe:
+        log.error("Safety gate blocked scenic: %s", reason)
+        try:
+            record_used_topic(topic)
+        except Exception:
+            pass
+        notify(f"⚠️ Safety blocked scenic: {topic}\n{reason}")
+        sys.exit(2)
+
+    video_url = upload_to_public_host(final_path)
+    log.info("Uploaded scenic: %s", video_url)
+    media_id = publish_reel(video_url, caption, is_ai_generated=False)
+
+    if media_id:
+        log.info("Published scenic: %s", media_id)
+        try:
+            record_used_topic(topic)
+        except Exception as e:
+            log.warning("record topic: %s", e)
+        notify(f"✅ Scenic Reel: {topic}\nmedia_id={media_id}")
+        try:
+            delete_public_object(video_url)
+            cleanup_old_media()
+        except Exception as e:
+            log.warning("R2 cleanup: %s", e)
+    else:
+        log.error("Scenic publish failed")
+        notify(f"❌ Scenic publish failed: {topic}")
+        sys.exit(3)
+
+
+def run_facts() -> None:
     script = select_script()
     source = script.get("source", "trend")
     topic = script["topic"]
 
     if is_topic_used(topic):
-        log.error("Refusing to post already-used topic: %s", topic)
-        notify(f"❌ Blocked duplicate topic: {topic}")
+        log.error("Refusing duplicate: %s", topic)
+        notify(f"❌ Blocked duplicate: {topic}")
         sys.exit(5)
 
     log.info("Selected [%s]: %s", source, topic)
@@ -123,13 +193,12 @@ def run_once() -> None:
             caption, " ".join(full_narration[:-1]) or " ".join(full_narration)
         )
         if not safe:
-            log.error("Safety gate blocked this post: %s", reason)
-            # Mark used so the next run does not rebuild the same medical/risky topic
+            log.error("Safety gate blocked: %s", reason)
             try:
                 record_used_topic(topic)
-            except Exception as e:
-                log.warning("Could not record blocked topic: %s", e)
-            notify(f"⚠️ Safety gate blocked post: {topic}\nReason: {reason}")
+            except Exception:
+                pass
+            notify(f"⚠️ Safety blocked: {topic}\n{reason}")
             sys.exit(2)
 
         video_url = upload_to_public_host(final_path)
@@ -141,20 +210,16 @@ def run_once() -> None:
             try:
                 record_used_topic(topic)
             except Exception as e:
-                log.warning("Could not record used topic: %s", e)
-            notify(f"✅ Published Reel [{source}]: {topic}\nmedia_id={media_id}")
+                log.warning("record topic: %s", e)
+            notify(f"✅ Published [{source}]: {topic}\nmedia_id={media_id}")
             try:
                 delete_public_object(video_url)
                 cleanup_old_media()
             except Exception as e:
-                log.warning("R2 cleanup warning (non-fatal): %s", e)
+                log.warning("R2 cleanup: %s", e)
         else:
-            log.error("Publish failed (container never reached FINISHED).")
-            notify(f"❌ Publish failed for: {topic}")
-            try:
-                cleanup_old_media()
-            except Exception as e:
-                log.warning("R2 cleanup warning: %s", e)
+            log.error("Publish failed")
+            notify(f"❌ Publish failed: {topic}")
             sys.exit(3)
     except Exception as e:
         log.exception("Pipeline failed")
@@ -163,6 +228,26 @@ def run_once() -> None:
     finally:
         if os.environ.get("CLEANUP_RENDERS", "1") == "1":
             shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def run_once() -> None:
+    if _want_scenic():
+        run_id = uuid.uuid4().hex[:8]
+        run_dir = os.path.join(WORK_DIR, run_id)
+        os.makedirs(run_dir, exist_ok=True)
+        log.info("Running SCENIC niche")
+        try:
+            run_scenic(run_dir)
+        except Exception as e:
+            log.exception("Scenic failed — falling back to facts: %s", e)
+            notify(f"⚠️ Scenic failed, trying facts: {e}")
+            run_facts()
+        finally:
+            if os.environ.get("CLEANUP_RENDERS", "1") == "1":
+                shutil.rmtree(run_dir, ignore_errors=True)
+        return
+
+    run_facts()
 
 
 if __name__ == "__main__":
