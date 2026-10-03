@@ -1,13 +1,8 @@
 """
 Strict anti-repeat for every Reel (facts + scenic).
 
-Tracks:
-  - used_topics (titles)
-  - used_stock_ids (pexels/pixabay video ids)
-  - used_places (scenic destinations)
-  - used_fingerprints (normalized narration snippets)
-
-Matching is aggressive: keyword overlap, substring, shared distinctive tokens.
+Tracks used_topics, used_stock_ids, used_places, used_fingerprints.
+Hard-blocks grow from every past topic automatically.
 """
 
 from __future__ import annotations
@@ -21,20 +16,21 @@ log = logging.getLogger("uniqueness")
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "script_state.json")
 USED_TOPICS_MAX = int(os.environ.get("USED_TOPICS_MAX", "800"))
-USED_IDS_MAX = int(os.environ.get("USED_STOCK_IDS_MAX", "400"))
+USED_IDS_MAX = int(os.environ.get("USED_STOCK_IDS_MAX", "500"))
 
-# Always-block clusters (even if not in state yet)
 HARD_BLOCK_PHRASES = (
     "wardenclyffe", "tesla tower", "antikythera", "pigeon", "cosmic microwave",
     "stick insect", "magnetar", "superfluid quantum", "tulip mania",
     "orionid", "voyager 1 golden", "holei", "hōlei", "lunar cave",
-    "solar hydrogen", "platinum surface",
+    "solar hydrogen", "platinum surface", "ancient chocolate", "mississippi chocolate",
+    "swiss glacier", "sea arch",
 )
 
 STOP = {
     "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "its", "it",
     "may", "this", "that", "with", "from", "by", "at", "is", "are", "was",
-    "how", "why", "what", "when", "new", "old", "year", "years", "old",
+    "how", "why", "what", "when", "new", "old", "year", "years", "east",
+    "west", "boosts", "threatens", "reveal", "birth", "origin",
 }
 
 
@@ -78,49 +74,55 @@ def fingerprint(*parts: str) -> str:
 def _overlap_ratio(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
-    inter = len(a & b)
-    return inter / max(1, min(len(a), len(b)))
+    return len(a & b) / max(1, min(len(a), len(b)))
+
+
+def _dynamic_hard_blocks() -> set[str]:
+    """Build extra block phrases from every used topic (bigrams + distinctive words)."""
+    blocks = set(HARD_BLOCK_PHRASES)
+    for u in _load().get("used_topics") or []:
+        n = normalize(str(u))
+        words = [w for w in n.split() if w not in STOP and len(w) > 3]
+        for w in words:
+            if len(w) >= 6:
+                blocks.add(w)
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]} {words[i+1]}"
+            if len(bigram) >= 8:
+                blocks.add(bigram)
+    return blocks
 
 
 def is_duplicate_topic(topic: str) -> bool:
-    """True if this topic is too similar to anything already used."""
     norm = normalize(topic)
     if not norm or len(norm) < 6:
-        return True  # reject empty/tiny
+        return True
 
-    for phrase in HARD_BLOCK_PHRASES:
+    for phrase in _dynamic_hard_blocks():
         if phrase in norm:
-            log.warning("Hard-blocked phrase %r in %r", phrase, topic[:80])
+            log.warning("Hard-blocked %r in %r", phrase, topic[:80])
             return True
 
     state = _load()
     used = [str(x) for x in (state.get("used_topics") or [])]
     used_fp = [str(x) for x in (state.get("used_fingerprints") or [])]
     used_places = [normalize(str(x)) for x in (state.get("used_places") or [])]
-
     topic_toks = tokens(topic)
 
     for u in used:
         un = normalize(u)
         if not un:
             continue
-        # exact / substring
         if norm == un or norm in un or un in norm:
-            log.warning("Duplicate substring vs used: %r ~ %r", topic[:60], u[:60])
+            log.warning("Duplicate substring: %r ~ %r", topic[:60], u[:60])
             return True
-        # high token overlap
         ut = tokens(u)
         ratio = _overlap_ratio(topic_toks, ut)
-        if ratio >= 0.55 and len(topic_toks & ut) >= 2:
-            log.warning(
-                "Duplicate overlap %.0f%% vs used: %r ~ %r",
-                ratio * 100,
-                topic[:50],
-                u[:50],
-            )
+        # stricter: 45% + 2 tokens
+        if ratio >= 0.45 and len(topic_toks & ut) >= 2:
+            log.warning("Duplicate overlap %.0f%%: %r ~ %r", ratio * 100, topic[:50], u[:50])
             return True
-        # shared distinctive long token
-        shared = {t for t in (topic_toks & ut) if len(t) >= 6}
+        shared = {t for t in (topic_toks & ut) if len(t) >= 5}
         if len(shared) >= 2:
             log.warning("Duplicate keywords %s: %r", shared, topic[:50])
             return True
@@ -130,10 +132,9 @@ def is_duplicate_topic(topic: str) -> bool:
         log.warning("Duplicate fingerprint: %r", fp[:80])
         return True
 
-    # Scenic place already used
     for p in used_places:
         if p and (p in norm or norm in p):
-            log.warning("Duplicate place %r in topic %r", p, topic[:50])
+            log.warning("Duplicate place %r in %r", p, topic[:50])
             return True
 
     return False
@@ -143,8 +144,7 @@ def is_stock_used(source: str, stock_id) -> bool:
     if stock_id is None:
         return False
     key = f"{source}:{stock_id}".lower()
-    state = _load()
-    used = {str(x).lower() for x in (state.get("used_stock_ids") or [])}
+    used = {str(x).lower() for x in (_load().get("used_stock_ids") or [])}
     if key in used:
         log.warning("Stock id already used: %s", key)
         return True
@@ -155,13 +155,11 @@ def is_place_used(place: str) -> bool:
     p = normalize(place)
     if not p:
         return False
-    state = _load()
-    for u in state.get("used_places") or []:
+    for u in _load().get("used_places") or []:
         un = normalize(str(u))
         if p == un or p in un or un in p:
             log.warning("Place already used: %r ~ %r", place, u)
             return True
-    # also against used_topics text
     if is_duplicate_topic(f"Trending escape: {place}"):
         return True
     return False
@@ -173,6 +171,7 @@ def record_post(
     place: str | None = None,
     stock_source: str | None = None,
     stock_id=None,
+    stock_ids: list[str] | None = None,
     fingerprint_parts: list[str] | None = None,
 ) -> None:
     state = _load()
@@ -196,10 +195,18 @@ def record_post(
     places = places[-USED_IDS_MAX:]
 
     ids = list(state.get("used_stock_ids") or [])
-    if stock_source is not None and stock_id is not None:
-        key = f"{stock_source}:{stock_id}"
-        if key.lower() not in {x.lower() for x in ids}:
+    existing = {x.lower() for x in ids}
+
+    def _add_id(key: str) -> None:
+        if key and key.lower() not in existing:
             ids.append(key)
+            existing.add(key.lower())
+
+    if stock_source is not None and stock_id is not None:
+        _add_id(f"{stock_source}:{stock_id}")
+    for s in stock_ids or []:
+        _add_id(str(s))
+
     ids = ids[-USED_IDS_MAX:]
 
     _save(
@@ -211,15 +218,13 @@ def record_post(
         }
     )
     log.info(
-        "Recorded unique post: topic=%r place=%r stock=%s:%s",
+        "Recorded unique post: topic=%r place=%r stocks=%s",
         topic[:60],
         place,
-        stock_source,
-        stock_id,
+        ids[-5:],
     )
 
 
-# Back-compat aliases used by older imports
 def is_topic_used(topic: str) -> bool:
     return is_duplicate_topic(topic)
 

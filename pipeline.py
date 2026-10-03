@@ -20,11 +20,11 @@ from engagement import build_growth_caption
 from trend_script import generate_trend_script
 from uniqueness import (
     is_duplicate_topic,
-    is_topic_used,
+    is_stock_used,
     record_post,
     record_used_topic,
 )
-from stock_video import find_motion_clip, download_clip, is_stock_used_safe
+from stock_video import find_motion_clip, download_clip
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pipeline")
@@ -94,7 +94,10 @@ def select_script() -> dict:
     sys.exit(4)
 
 
-def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = None) -> tuple[str, str]:
+def _build_one_beat(
+    beat: dict, run_dir: str, i: int, on_screen: str | None = None
+) -> tuple[str, str, str | None]:
+    """Returns (clip_path, narration, stock_key or None)."""
     narration = beat["narration"]
     prompt = beat.get("image_prompt") or ""
     caption = on_screen if on_screen is not None else narration
@@ -111,18 +114,15 @@ def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = No
 
     if motion:
         try:
-            # skip if this exact stock file was already used in a prior post
-            from uniqueness import is_stock_used
-
             if is_stock_used(motion.get("source", ""), motion.get("id")):
                 log.info("Skip already-used motion stock id=%s", motion.get("id"))
-                motion = None
             else:
                 raw_vid = os.path.join(run_dir, f"beat{i}_stock.mp4")
                 download_clip(motion["url"], raw_vid)
                 build_video_beat_clip(raw_vid, audio_path, caption, clip_path)
-                log.info("Beat %d: LIVE VIDEO (%s id=%s)", i, motion["source"], motion.get("id"))
-                return clip_path, narration
+                key = f"{motion['source']}:{motion['id']}"
+                log.info("Beat %d: LIVE VIDEO (%s)", i, key)
+                return clip_path, narration, key
         except Exception as e:
             log.warning("Motion video beat failed, still fallback: %s", e)
 
@@ -130,7 +130,7 @@ def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = No
     generate_image(prompt, img_path)
     build_beat_clip(img_path, audio_path, caption, clip_path)
     log.info("Beat %d: still + Ken Burns", i)
-    return clip_path, narration
+    return clip_path, narration, None
 
 
 def run_scenic(run_dir: str) -> None:
@@ -150,7 +150,7 @@ def run_scenic(run_dir: str) -> None:
     safe, reason = check_content_safe(caption, result.get("narration_text", topic))
     if not safe:
         log.error("Safety blocked scenic: %s", reason)
-        record_post(topic, place=place)  # don't retry same blocked place
+        record_post(topic, place=place)
         notify(f"⚠️ Safety blocked scenic: {topic}\n{reason}")
         sys.exit(2)
 
@@ -196,7 +196,7 @@ def run_facts() -> None:
 
     clip_paths = []
     full_narration = []
-    used_motion_ids = []
+    used_stock_keys: list[str] = []
 
     try:
         beats = list(script["beats"])[:4]
@@ -204,9 +204,11 @@ def run_facts() -> None:
         log.info("CTA set #%s: %s", cta.get("cta_index"), cta["on_screen_text"])
 
         for i, beat in enumerate(beats):
-            clip_path, narration = _build_one_beat(beat, run_dir, i)
+            clip_path, narration, stock_key = _build_one_beat(beat, run_dir, i)
             clip_paths.append(clip_path)
             full_narration.append(narration)
+            if stock_key:
+                used_stock_keys.append(stock_key)
             log.info("Beat %d/%d done", i + 1, len(beats))
 
         cta_i = len(beats)
@@ -214,16 +216,17 @@ def run_facts() -> None:
             "narration": cta["narration"],
             "image_prompt": cta["image_prompt"],
         }
-        clip_path, narration = _build_one_beat(
+        clip_path, narration, stock_key = _build_one_beat(
             cta_beat, run_dir, cta_i, on_screen=cta["on_screen_text"]
         )
         clip_paths.append(clip_path)
         full_narration.append(narration)
+        if stock_key:
+            used_stock_keys.append(stock_key)
 
         final_path = os.path.join(run_dir, "final.mp4")
         concat_clips(clip_paths, final_path)
 
-        # Final gate before upload
         if is_duplicate_topic(topic):
             log.error("STRICT final gate blocked: %s", topic)
             sys.exit(5)
@@ -234,7 +237,7 @@ def run_facts() -> None:
         )
         if not safe:
             log.error("Safety blocked: %s", reason)
-            record_used_topic(topic)
+            record_post(topic, stock_ids=used_stock_keys, fingerprint_parts=full_narration[:3])
             notify(f"⚠️ Safety blocked: {topic}\n{reason}")
             sys.exit(2)
 
@@ -245,6 +248,7 @@ def run_facts() -> None:
             log.info("Published: %s", media_id)
             record_post(
                 topic,
+                stock_ids=used_stock_keys,
                 fingerprint_parts=full_narration[:3],
             )
             notify(f"✅ Published [{source}]: {topic}\nmedia_id={media_id}")
