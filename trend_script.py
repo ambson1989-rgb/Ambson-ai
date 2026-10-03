@@ -1,5 +1,5 @@
 """
-Unique short Reel scripts. Avoids medical/disease topics.
+Unique short Reel scripts. Strict no-repeat via uniqueness module.
 """
 
 from __future__ import annotations
@@ -12,11 +12,9 @@ from typing import Any
 
 from trend_scout import fetch_niche_trends
 from llm_client import generate_text
+from uniqueness import is_duplicate_topic, is_topic_used, record_used_topic, _load
 
 log = logging.getLogger("trend_script")
-
-STATE_FILE = os.path.join(os.path.dirname(__file__), "script_state.json")
-USED_TOPICS_MAX = int(os.environ.get("USED_TOPICS_MAX", "500"))
 
 SYSTEM = """You write SHORT vertical Instagram Reels (history / science / space / archaeology / nature / physics).
 Goal: stop the scroll, teach one surprising fact, drive follows.
@@ -32,6 +30,7 @@ FORBIDDEN TOPICS (never write about these):
 - Medical advice, diseases, treatments, genes-as-therapy, mental health disorders
 - Alzheimer's, cancer, diabetes, vaccines, clinical trials, patient outcomes
 - Financial or legal advice; attacks on living private people
+- ANY topic on the avoid list below (or close variants)
 Prefer: space, archaeology, ancient tech, physics curiosities, animals, geology, classic science history.
 
 HOOK RULES:
@@ -42,77 +41,6 @@ HOOK RULES:
 Respond with ONLY valid JSON:
 {"topic": "short title under 90 chars", "beats": [{"narration": "...", "image_prompt": "..."}]}
 """
-
-
-def _load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE) as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _save_state(updates: dict) -> None:
-    state = _load_state()
-    state.update(updates)
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
-
-
-def _normalize_topic(topic: str) -> str:
-    t = re.sub(r"\s+", " ", (topic or "").lower().strip())
-    t = re.sub(r"[^a-z0-9\s]", "", t)
-    return t[:100]
-
-
-def _topic_keys(topic: str) -> set[str]:
-    norm = _normalize_topic(topic)
-    keys = {norm}
-    for phrase in (
-        "wardenclyffe", "tesla", "antikythera", "pigeon", "cosmic microwave",
-        "baghdad battery", "voynich", "great pyramid", "otzi", "iceman",
-        "alexandria", "pulsar", "tunguska", "roman concrete", "pioneer anomaly",
-        "gobekli", "greek fire", "stick insect", "magnetar", "helium",
-        "superfluid", "quantum", "alzheimer", "apoe",
-    ):
-        if phrase in norm:
-            keys.add(phrase)
-    return keys
-
-
-def _used_topics() -> set[str]:
-    state = _load_state()
-    used: set[str] = set()
-    for x in state.get("used_topics") or []:
-        used |= _topic_keys(str(x))
-    return used
-
-
-def is_topic_used(topic: str) -> bool:
-    keys = _topic_keys(topic)
-    used = _used_topics()
-    if not keys:
-        return False
-    if keys & used:
-        return True
-    norm = _normalize_topic(topic)
-    for u in used:
-        if len(u) > 12 and (norm in u or u in norm):
-            return True
-    return False
-
-
-def record_used_topic(topic: str) -> None:
-    state = _load_state()
-    used = list(state.get("used_topics") or [])
-    if topic not in used:
-        used.append(topic)
-    used = used[-USED_TOPICS_MAX:]
-    _save_state({"used_topics": used})
 
 
 def _extract_json(text: str) -> dict | None:
@@ -158,7 +86,7 @@ def _validate_script(data: dict) -> dict | None:
 
 def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
     try:
-        raw = generate_text(SYSTEM, prompt, max_tokens=900, temperature=0.7)
+        raw = generate_text(SYSTEM, prompt, max_tokens=900, temperature=0.75)
     except Exception as e:
         log.error("Script LLM failed: %s", e)
         return None
@@ -167,47 +95,60 @@ def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
     if not script:
         log.warning("Invalid script JSON: %s", (raw or "")[:180])
         return None
-    if is_topic_used(script["topic"]):
-        log.warning("Topic already used (rejected): %s", script["topic"])
+    if is_duplicate_topic(script["topic"]):
+        log.warning("STRICT reject used/similar topic: %s", script["topic"])
         return None
+    # also reject if any beat narration collides strongly with topic history
+    for b in script["beats"]:
+        if is_duplicate_topic(b["narration"][:90]):
+            log.warning("STRICT reject similar narration: %s", b["narration"][:60])
+            return None
     log.info("Script topic: %s (%d beats)", script["topic"], len(script["beats"]))
     return script
 
 
 def generate_trend_script() -> dict[str, Any] | None:
-    used = list(_load_state().get("used_topics") or [])
+    used = list((_load().get("used_topics") or []))
     avoid = ""
     if used:
         avoid = (
-            "\n\nDo NOT reuse ANY of these already-posted topics (or close variants):\n"
-            + "\n".join(f"- {u}" for u in used[-40:])
+            "\n\nSTRICT AVOID — do NOT reuse these topics or close variants:\n"
+            + "\n".join(f"- {u}" for u in used[-60:])
+            + "\nInvent a clearly DIFFERENT subject."
         )
 
-    trends = fetch_niche_trends(max_items=15)
+    trends = fetch_niche_trends(max_items=20)
     if trends:
-        fresh = [t for t in trends if not is_topic_used(t["title"])]
+        fresh = [t for t in trends if not is_duplicate_topic(t["title"])]
         if not fresh:
-            fresh = trends
-        lines = [f"{i}. [{t['subreddit']}] {t['title']}" for i, t in enumerate(fresh[:10], 1)]
-        prompt = (
-            "Pick ONE fresh headline for a short educational Reel "
-            "(space, archaeology, physics, nature, ancient tech — NOT medical/disease). "
-            "Avoid politics and memes. Must be unique.\n"
-            "Hard HOOK in beat 1.\n\n"
-            + "\n".join(lines)
-            + avoid
-            + "\n\nWrite the Reel script JSON (3–4 short beats)."
-        )
-        script = _generate_from_prompt(prompt)
-        if script:
-            return script
+            log.warning("All trend headlines look used — inventing instead")
+            fresh = []
+        if fresh:
+            lines = [
+                f"{i}. [{t['subreddit']}] {t['title']}"
+                for i, t in enumerate(fresh[:12], 1)
+            ]
+            prompt = (
+                "Pick ONE fresh headline for a short educational Reel "
+                "(space, archaeology, physics, nature, ancient tech — NOT medical/disease). "
+                "Must be unique — never a repeat or near-repeat.\n"
+                "Hard HOOK in beat 1.\n\n"
+                + "\n".join(lines)
+                + avoid
+                + "\n\nWrite the Reel script JSON (3–4 short beats)."
+            )
+            script = _generate_from_prompt(prompt)
+            if script:
+                return script
 
     log.warning("Asking LLM to invent a unique educational topic")
     invent = (
         "Invent ONE unique educational Reel topic in space, archaeology, physics, "
         "nature, or classic science history — NOT medical or disease.\n"
         "Beat 1 must be a scroll-stopping hook.\n"
+        "The topic MUST be completely different from every item on the avoid list.\n"
         + avoid
         + "\n\nWrite the Reel script JSON (3–4 short beats)."
     )
+    # more attempts with higher temperature path via retries at caller
     return _generate_from_prompt(invent)

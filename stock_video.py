@@ -1,9 +1,5 @@
 """
-Fetch short licensed stock VIDEO clips for motion-heavy beats
-(ocean waves, waterfalls, clouds, fire, space, etc.).
-
-Uses PEXELS_API_KEY / PIXABAY_API_KEY — same as scenic niche.
-Falls back to None so pipeline can use AI still + Ken Burns.
+Licensed motion clips for beats. Skips already-used stock IDs.
 """
 
 from __future__ import annotations
@@ -16,12 +12,13 @@ from typing import Any
 
 import requests
 
+from uniqueness import is_stock_used
+
 log = logging.getLogger("stock_video")
 
 PEXELS_VIDEOS = "https://api.pexels.com/videos/search"
 PIXABAY_VIDEOS = "https://pixabay.com/api/videos/"
 
-# Prompts that benefit from real moving footage
 MOTION_RE = re.compile(
     r"\b("
     r"ocean|sea|wave|waves|water|waterfall|river|lake|rain|storm|"
@@ -34,7 +31,6 @@ MOTION_RE = re.compile(
     re.I,
 )
 
-# Map prompt keywords → stock search query (cinematic real footage)
 QUERY_MAP = [
     (r"ocean|sea|wave", "ocean waves aerial cinematic"),
     (r"waterfall", "waterfall nature cinematic"),
@@ -59,7 +55,6 @@ def _search_query(prompt: str) -> str:
     for pattern, q in QUERY_MAP:
         if re.search(pattern, p, re.I):
             return q
-    # Generic from first few words
     words = re.findall(r"[a-zA-Z]+", p)[:6]
     return " ".join(words) + " cinematic video" if words else "nature cinematic"
 
@@ -72,8 +67,7 @@ def _best_pexels_file(video: dict) -> dict | None:
     def score(f: dict) -> tuple:
         w = int(f.get("width") or 0)
         h = int(f.get("height") or 0)
-        vertical = 1 if h >= w else 0
-        return (vertical, w * h)
+        return (1 if h >= w else 0, w * h)
 
     for f in sorted(files, key=score, reverse=True):
         if f.get("link"):
@@ -101,6 +95,8 @@ def _pexels(query: str) -> dict | None:
             videos = resp.json().get("videos") or []
             random.shuffle(videos)
             for v in videos:
+                if is_stock_used("pexels", v.get("id")):
+                    continue
                 best = _best_pexels_file(v)
                 if not best:
                     continue
@@ -142,6 +138,8 @@ def _pixabay(query: str) -> dict | None:
         hits = resp.json().get("hits") or []
         random.shuffle(hits)
         for h in hits:
+            if is_stock_used("pixabay", h.get("id")):
+                continue
             videos = h.get("videos") or {}
             for quality in ("large", "medium", "small"):
                 vf = videos.get(quality) or {}
@@ -162,30 +160,21 @@ def _pixabay(query: str) -> dict | None:
 
 
 def find_motion_clip(image_prompt: str) -> dict | None:
-    """Return stock video meta if prompt needs real motion; else None."""
     if not wants_motion_video(image_prompt):
         return None
     if not (
         os.environ.get("PEXELS_API_KEY", "").strip()
         or os.environ.get("PIXABAY_API_KEY", "").strip()
     ):
-        log.info("No Pexels/Pixabay key — skip motion stock for this beat")
         return None
 
     query = _search_query(image_prompt)
     log.info("Motion stock search: %r", query)
-    for searcher in (_pexels, _pixabay):
+    for searcher in (_pixabay, _pexels):
         hit = searcher(query)
         if hit:
-            log.info(
-                "Motion clip: %s id=%s %sx%s",
-                hit["source"],
-                hit["id"],
-                hit["width"],
-                hit["height"],
-            )
+            log.info("Motion clip: %s id=%s", hit["source"], hit["id"])
             return hit
-    log.warning("No motion stock found for %r", query)
     return None
 
 
@@ -197,3 +186,7 @@ def download_clip(url: str, path: str) -> str:
                 if chunk:
                     f.write(chunk)
     return path
+
+
+def is_stock_used_safe(source: str, stock_id) -> bool:
+    return is_stock_used(source, stock_id)

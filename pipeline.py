@@ -1,7 +1,6 @@
 """
 Generate and publish one unique Reel every run.
-Facts: AI images + motion stock video when water/sky/etc. need natural movement.
-Scenic: full travel stock video + BGM.
+STRICT: never republish same/similar topic, place, or stock clip.
 """
 
 import logging
@@ -18,8 +17,14 @@ from instagram_client import publish_reel
 from media_host import upload_to_public_host, delete_public_object, cleanup_old_media
 from cta import next_cta_beat
 from engagement import build_growth_caption
-from trend_script import generate_trend_script, record_used_topic, is_topic_used
-from stock_video import find_motion_clip, download_clip
+from trend_script import generate_trend_script
+from uniqueness import (
+    is_duplicate_topic,
+    is_topic_used,
+    record_post,
+    record_used_topic,
+)
+from stock_video import find_motion_clip, download_clip, is_stock_used_safe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pipeline")
@@ -67,33 +72,29 @@ def _want_scenic() -> bool:
 
 def select_script() -> dict:
     mode = os.environ.get("CONTENT_MODE", "auto").strip().lower()
-    log.info("CONTENT_MODE=%s", mode)
+    log.info("CONTENT_MODE=%s (strict uniqueness ON)", mode)
 
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             script = generate_trend_script()
             if not script:
                 log.warning("Trend attempt %d produced no script", attempt + 1)
                 continue
             topic = script.get("topic", "")
-            if is_topic_used(topic):
-                log.warning("Rejected already-used topic: %s", topic)
+            if is_duplicate_topic(topic):
+                log.warning("STRICT reject attempt %d: %s", attempt + 1, topic)
                 continue
             log.info("Accepted unique topic: %s", topic)
             return script
         except Exception as e:
             log.warning("Trend attempt %d failed: %s", attempt + 1, e)
 
-    log.error("Could not produce a unique script after 3 attempts — aborting")
-    notify("❌ Pipeline aborted: could not generate a unique topic")
+    log.error("STRICT: could not produce unique script after 5 attempts — abort")
+    notify("❌ Aborted: no unique topic (strict no-repeat)")
     sys.exit(4)
 
 
 def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = None) -> tuple[str, str]:
-    """
-    Prefer real motion video for ocean/water/sky/etc.; else AI still + Ken Burns.
-    Returns (clip_path, narration_text).
-    """
     narration = beat["narration"]
     prompt = beat.get("image_prompt") or ""
     caption = on_screen if on_screen is not None else narration
@@ -110,13 +111,20 @@ def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = No
 
     if motion:
         try:
-            raw_vid = os.path.join(run_dir, f"beat{i}_stock.mp4")
-            download_clip(motion["url"], raw_vid)
-            build_video_beat_clip(raw_vid, audio_path, caption, clip_path)
-            log.info("Beat %d: LIVE VIDEO (%s)", i, motion["source"])
-            return clip_path, narration
+            # skip if this exact stock file was already used in a prior post
+            from uniqueness import is_stock_used
+
+            if is_stock_used(motion.get("source", ""), motion.get("id")):
+                log.info("Skip already-used motion stock id=%s", motion.get("id"))
+                motion = None
+            else:
+                raw_vid = os.path.join(run_dir, f"beat{i}_stock.mp4")
+                download_clip(motion["url"], raw_vid)
+                build_video_beat_clip(raw_vid, audio_path, caption, clip_path)
+                log.info("Beat %d: LIVE VIDEO (%s id=%s)", i, motion["source"], motion.get("id"))
+                return clip_path, narration
         except Exception as e:
-            log.warning("Motion video beat failed, falling back to still: %s", e)
+            log.warning("Motion video beat failed, still fallback: %s", e)
 
     img_path = os.path.join(run_dir, f"beat{i}.png")
     generate_image(prompt, img_path)
@@ -130,32 +138,34 @@ def run_scenic(run_dir: str) -> None:
 
     result = build_scenic_reel(run_dir)
     topic = result["topic"]
+    place = result.get("place")
+    stock = result.get("stock") or {}
+
+    if is_duplicate_topic(topic):
+        log.error("STRICT block scenic duplicate topic: %s", topic)
+        sys.exit(5)
+
     final_path = result["final_path"]
-
-    if is_topic_used(topic):
-        topic = f"{topic} · {result['stock'].get('id')}"
-
     caption = build_caption(topic, source="scenic", extra=result.get("credit", ""))
     safe, reason = check_content_safe(caption, result.get("narration_text", topic))
     if not safe:
-        log.error("Safety gate blocked scenic: %s", reason)
-        try:
-            record_used_topic(topic)
-        except Exception:
-            pass
+        log.error("Safety blocked scenic: %s", reason)
+        record_post(topic, place=place)  # don't retry same blocked place
         notify(f"⚠️ Safety blocked scenic: {topic}\n{reason}")
         sys.exit(2)
 
     video_url = upload_to_public_host(final_path)
-    log.info("Uploaded scenic: %s", video_url)
     media_id = publish_reel(video_url, caption, is_ai_generated=False)
 
     if media_id:
         log.info("Published scenic: %s", media_id)
-        try:
-            record_used_topic(topic)
-        except Exception as e:
-            log.warning("record topic: %s", e)
+        record_post(
+            topic,
+            place=place,
+            stock_source=stock.get("source"),
+            stock_id=stock.get("id"),
+            fingerprint_parts=[result.get("narration_text", "")],
+        )
         notify(f"✅ Scenic Reel: {topic}\nmedia_id={media_id}")
         try:
             delete_public_object(video_url)
@@ -173,8 +183,8 @@ def run_facts() -> None:
     source = script.get("source", "trend")
     topic = script["topic"]
 
-    if is_topic_used(topic):
-        log.error("Refusing duplicate: %s", topic)
+    if is_duplicate_topic(topic):
+        log.error("STRICT refusing duplicate: %s", topic)
         notify(f"❌ Blocked duplicate: {topic}")
         sys.exit(5)
 
@@ -186,6 +196,7 @@ def run_facts() -> None:
 
     clip_paths = []
     full_narration = []
+    used_motion_ids = []
 
     try:
         beats = list(script["beats"])[:4]
@@ -208,35 +219,34 @@ def run_facts() -> None:
         )
         clip_paths.append(clip_path)
         full_narration.append(narration)
-        log.info("CTA beat done")
 
         final_path = os.path.join(run_dir, "final.mp4")
         concat_clips(clip_paths, final_path)
-        log.info("Assembled: %s", final_path)
+
+        # Final gate before upload
+        if is_duplicate_topic(topic):
+            log.error("STRICT final gate blocked: %s", topic)
+            sys.exit(5)
 
         caption = build_caption(topic, source=source)
         safe, reason = check_content_safe(
             caption, " ".join(full_narration[:-1]) or " ".join(full_narration)
         )
         if not safe:
-            log.error("Safety gate blocked: %s", reason)
-            try:
-                record_used_topic(topic)
-            except Exception:
-                pass
+            log.error("Safety blocked: %s", reason)
+            record_used_topic(topic)
             notify(f"⚠️ Safety blocked: {topic}\n{reason}")
             sys.exit(2)
 
         video_url = upload_to_public_host(final_path)
-        log.info("Uploaded: %s", video_url)
         media_id = publish_reel(video_url, caption, is_ai_generated=True)
 
         if media_id:
             log.info("Published: %s", media_id)
-            try:
-                record_used_topic(topic)
-            except Exception as e:
-                log.warning("record topic: %s", e)
+            record_post(
+                topic,
+                fingerprint_parts=full_narration[:3],
+            )
             notify(f"✅ Published [{source}]: {topic}\nmedia_id={media_id}")
             try:
                 delete_public_object(video_url)
@@ -261,11 +271,11 @@ def run_once() -> None:
         run_id = uuid.uuid4().hex[:8]
         run_dir = os.path.join(WORK_DIR, run_id)
         os.makedirs(run_dir, exist_ok=True)
-        log.info("Running SCENIC niche")
+        log.info("Running SCENIC (strict unique places/stock)")
         try:
             run_scenic(run_dir)
         except Exception as e:
-            log.exception("Scenic failed — falling back to facts: %s", e)
+            log.exception("Scenic failed — facts fallback: %s", e)
             notify(f"⚠️ Scenic failed, trying facts: {e}")
             run_facts()
         finally:

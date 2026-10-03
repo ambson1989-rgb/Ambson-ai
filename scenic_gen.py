@@ -1,11 +1,5 @@
 """
-Scenic / travel niche:
-1) Scout trending travel locations
-2) Find matching licensed stock video (Pexels / Pixabay — real camera, not scraped IG/TT)
-3) Add vibe-matched BGM
-4) Encode clean 1080x1920 for Instagram Reels (IG does not deliver 8K)
-
-Secrets: PEXELS_API_KEY, PIXABAY_API_KEY, optional SCENIC_BGM_URL
+Scenic / travel niche with strict no-repeat places + stock IDs.
 """
 
 from __future__ import annotations
@@ -19,6 +13,7 @@ from typing import Any
 import requests
 
 from travel_scout import fetch_trending_travel
+from uniqueness import is_place_used, is_stock_used, is_duplicate_topic
 
 log = logging.getLogger("scenic_gen")
 
@@ -62,10 +57,9 @@ def _best_pexels_file(video: dict) -> dict | None:
         w = int(f.get("width") or 0)
         h = int(f.get("height") or 0)
         vertical = 1 if h >= w else 0
-        return (vertical, w * h, int(f.get("fps") or 0))
+        return (vertical, w * h)
 
-    ranked = sorted(files, key=score, reverse=True)
-    for f in ranked:
+    for f in sorted(files, key=score, reverse=True):
         if f.get("link"):
             return f
     return None
@@ -76,7 +70,6 @@ def _search_pexels(query: str) -> dict | None:
     if not key:
         return None
     try:
-        # Try portrait first, then any orientation (travel stock is often landscape drone)
         for orientation in ("portrait", None):
             params: dict[str, Any] = {"query": query, "per_page": 15}
             if orientation:
@@ -88,7 +81,6 @@ def _search_pexels(query: str) -> dict | None:
                 timeout=30,
             )
             if resp.status_code != 200:
-                log.warning("Pexels HTTP %s", resp.status_code)
                 continue
             videos = resp.json().get("videos") or []
             random.shuffle(videos)
@@ -96,12 +88,15 @@ def _search_pexels(query: str) -> dict | None:
                 best = _best_pexels_file(v)
                 if not best:
                     continue
+                sid = v.get("id")
+                if is_stock_used("pexels", sid):
+                    continue
                 w, h = int(best.get("width") or 0), int(best.get("height") or 0)
                 if w * h < 640 * 360:
                     continue
                 return {
                     "source": "pexels",
-                    "id": v.get("id"),
+                    "id": sid,
                     "url": best["link"],
                     "width": w,
                     "height": h,
@@ -136,6 +131,9 @@ def _search_pixabay(query: str) -> dict | None:
         hits = resp.json().get("hits") or []
         random.shuffle(hits)
         for h in hits:
+            sid = h.get("id")
+            if is_stock_used("pixabay", sid):
+                continue
             videos = h.get("videos") or {}
             for quality in ("large", "medium", "small", "tiny"):
                 vf = videos.get(quality) or {}
@@ -148,7 +146,7 @@ def _search_pixabay(query: str) -> dict | None:
                     continue
                 return {
                     "source": "pixabay",
-                    "id": h.get("id"),
+                    "id": sid,
                     "url": url,
                     "width": w,
                     "height": ht,
@@ -162,49 +160,50 @@ def _search_pixabay(query: str) -> dict | None:
 
 
 def _pick_stock_for_trends() -> tuple[dict, dict]:
-    """
-    Prefer trending travel locations; try stock search per location.
-    Returns (stock_meta, trend_meta).
-    """
-    trends = fetch_trending_travel(max_items=14)
-    random.shuffle(trends)  # avoid always same top headline
-    # Prefer higher score but still shuffle within top
+    trends = fetch_trending_travel(max_items=18)
+    # Drop places already posted
+    trends = [t for t in trends if not is_place_used(t.get("place", ""))]
+    if not trends:
+        raise RuntimeError("All trending travel places already used — strict uniqueness")
+
     trends = sorted(trends, key=lambda x: x.get("score", 0), reverse=True)
+    # shuffle top half so we don't always take #1
+    top = trends[:10]
+    random.shuffle(top)
 
     last_err = None
-    for t in trends:
+    for t in top:
+        place = t.get("place", "")
+        if is_place_used(place):
+            continue
+        if is_duplicate_topic(f"Trending escape: {place}"):
+            continue
         query = t["query"]
-        log.info("Trying stock for trending place %s → %r", t["place"], query)
-        for searcher in (_search_pexels, _search_pixabay):
+        log.info("Trying stock for NEW place %s → %r", place, query)
+        for searcher in (_search_pixabay, _search_pexels):
             try:
                 hit = searcher(query)
-                if hit:
-                    # Also try simpler place name if needed — already have hit
+                if hit and not is_stock_used(hit["source"], hit["id"]):
                     log.info(
-                        "Matched %s via %s id=%s %sx%s",
-                        t["place"],
+                        "Matched NEW %s via %s id=%s",
+                        place,
                         hit["source"],
                         hit["id"],
-                        hit["width"],
-                        hit["height"],
                     )
                     return hit, t
             except Exception as e:
                 last_err = e
-        # Fallback: search just the place name
-        simple = f"{t['place']} travel landscape"
-        for searcher in (_search_pexels, _search_pixabay):
+        simple = f"{place} travel landscape"
+        for searcher in (_search_pixabay, _search_pexels):
             try:
                 hit = searcher(simple)
-                if hit:
-                    log.info("Matched %s (simple query) via %s", t["place"], hit["source"])
+                if hit and not is_stock_used(hit["source"], hit["id"]):
                     return hit, t
             except Exception as e:
                 last_err = e
 
     raise RuntimeError(
-        f"No stock video for trending travel locations. "
-        f"Set PEXELS_API_KEY and/or PIXABAY_API_KEY. last={last_err}"
+        f"No unused stock for unused travel places (strict mode). last={last_err}"
     )
 
 
@@ -213,7 +212,6 @@ def _fetch_bgm(vibe: str, out_mp3: str) -> bool:
     if url:
         try:
             _download(url, out_mp3)
-            log.info("BGM from SCENIC_BGM_URL")
             return True
         except Exception as e:
             log.warning("SCENIC_BGM_URL failed: %s", e)
@@ -243,14 +241,11 @@ def _fetch_bgm(vibe: str, out_mp3: str) -> bool:
                         continue
                     try:
                         _download(audio_url, out_mp3)
-                        log.info("BGM Pixabay term=%r", term)
                         return True
                     except Exception:
                         continue
             except Exception as e:
                 log.warning("Pixabay music failed: %s", e)
-
-    log.warning("No BGM — quiet pad fallback")
     return False
 
 
@@ -270,38 +265,26 @@ def _ffmpeg_scenic(
 
     if audio_in and os.path.isfile(audio_in):
         cmd = [
-            "ffmpeg", "-y",
-            "-i", video_in,
-            "-i", audio_in,
-            "-t", str(max_seconds),
-            "-vf", vf,
+            "ffmpeg", "-y", "-i", video_in, "-i", audio_in,
+            "-t", str(max_seconds), "-vf", vf,
             "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-            "-pix_fmt", "yuv420p",
-            "-r", "30",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest",
-            "-movflags", "+faststart",
-            video_out,
+            "-pix_fmt", "yuv420p", "-r", "30",
+            "-c:a", "aac", "-b:a", "192k", "-shortest",
+            "-movflags", "+faststart", video_out,
         ]
     else:
         cmd = [
-            "ffmpeg", "-y",
-            "-i", video_in,
+            "ffmpeg", "-y", "-i", video_in,
             "-f", "lavfi", "-i", "sine=frequency=110:sample_rate=44100",
-            "-t", str(max_seconds),
-            "-vf", vf,
+            "-t", str(max_seconds), "-vf", vf,
             "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-            "-pix_fmt", "yuv420p",
-            "-r", "30",
+            "-pix_fmt", "yuv420p", "-r", "30",
             "-c:a", "aac", "-b:a", "128k",
             "-filter_complex", "[1:a]volume=0.04[a]",
-            "-map", "0:v", "-map", "[a]",
-            "-shortest",
-            "-movflags", "+faststart",
-            video_out,
+            "-map", "0:v", "-map", "[a]", "-shortest",
+            "-movflags", "+faststart", video_out,
         ]
 
-    log.info("ffmpeg scenic encode…")
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg scenic failed: {proc.stderr[-800:]}")
@@ -316,20 +299,17 @@ def build_scenic_reel(work_dir: str) -> dict[str, Any]:
     bgm_path = os.path.join(work_dir, "scenic_bgm.mp3")
     final_path = os.path.join(work_dir, "final.mp4")
 
-    log.info("Downloading matching travel stock for %s…", trend.get("place"))
     _download(stock["url"], raw_path)
-
     has_bgm = _fetch_bgm(vibe, bgm_path)
     max_sec = min(float(os.environ.get("MAX_REEL_SECONDS", "58")), 45.0)
     _ffmpeg_scenic(raw_path, bgm_path if has_bgm else None, final_path, max_seconds=max_sec)
 
     place = trend.get("place") or "Wanderlust"
     topic = f"Trending escape: {place}"
-    if trend.get("headline") and trend.get("source") != "evergreen":
-        # Keep caption topic short; headline informs engagement caption body optionally
-        pass
-    credit = f"Video: {stock['photographer']} via {stock['source'].title()}"
+    if is_duplicate_topic(topic) or is_place_used(place):
+        raise RuntimeError(f"Strict uniqueness blocked scenic place: {place}")
 
+    credit = f"Video: {stock['photographer']} via {stock['source'].title()}"
     return {
         "topic": topic,
         "final_path": final_path,
@@ -338,8 +318,6 @@ def build_scenic_reel(work_dir: str) -> dict[str, Any]:
         "credit": credit,
         "stock": stock,
         "trend": trend,
-        "narration_text": (
-            f"Trending travel destination look: {place}. "
-            f"Cinematic location footage. {credit}."
-        ),
+        "place": place,
+        "narration_text": f"Trending travel destination: {place}. {credit}.",
     }
