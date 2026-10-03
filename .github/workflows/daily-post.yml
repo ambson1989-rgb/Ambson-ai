@@ -1,12 +1,19 @@
 name: Daily reel post
 
-# Two posts per day (IST)
+# Target: 08:00 and 20:00 IST (GitHub cron is UTC and often delayed/skipped).
+# Primary:
 #   08:00 IST = 02:30 UTC
 #   20:00 IST = 14:30 UTC
+# Backup (+30 min) in case GitHub drops the primary slot:
+#   08:30 IST = 03:00 UTC
+#   20:30 IST = 15:00 UTC
+# A guard step skips if we already posted in the last 5 hours.
 on:
   schedule:
     - cron: "30 2 * * *"
+    - cron: "0 3 * * *"
     - cron: "30 14 * * *"
+    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       content_mode:
@@ -17,18 +24,73 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: daily-reel-post
+  cancel-in-progress: false
+
 jobs:
   post:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Skip if already posted recently (schedule only)
+        if: github.event_name == 'schedule'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys
+          from datetime import datetime, timezone, timedelta
+          path = "script_state.json"
+          if not os.path.exists(path):
+              print("No script_state.json — continue")
+              sys.exit(0)
+          try:
+              data = json.load(open(path))
+          except Exception as e:
+              print("Could not read state:", e)
+              sys.exit(0)
+          raw = (data.get("last_run_date") or "").strip()
+          if not raw:
+              print("No last_run_date — continue")
+              sys.exit(0)
+          try:
+              # accept Z or +00:00
+              ts = raw.replace("Z", "+00:00")
+              last = datetime.fromisoformat(ts)
+              if last.tzinfo is None:
+                  last = last.replace(tzinfo=timezone.utc)
+          except Exception as e:
+              print("Bad last_run_date", raw, e)
+              sys.exit(0)
+          age = datetime.now(timezone.utc) - last.astimezone(timezone.utc)
+          print(f"Last run: {last.isoformat()} age={age}")
+          if age < timedelta(hours=5):
+              print("SKIP: already posted within last 5 hours (avoid double from backup cron)")
+              # special exit for the job — write a marker
+              open("/tmp/skip_pipeline", "w").write("1")
+              sys.exit(0)
+          print("Continue: last post is old enough")
+          PY
+
+      - name: Check skip marker
+        id: gate
+        run: |
+          if [ -f /tmp/skip_pipeline ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Pipeline skipped (recent post already exists)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.skip != 'true'
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install ffmpeg
+        if: steps.gate.outputs.skip != 'true'
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/ffmpeg.tar.xz \
@@ -40,9 +102,12 @@ jobs:
           sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
           ffmpeg -version | head -1
 
-      - run: pip install -r requirements.txt
+      - name: Install Python deps
+        if: steps.gate.outputs.skip != 'true'
+        run: pip install -r requirements.txt
 
       - name: Resolve content mode
+        if: steps.gate.outputs.skip != 'true'
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MODE="${{ github.event.inputs.content_mode }}"
@@ -54,6 +119,7 @@ jobs:
           echo "Using CONTENT_MODE=$MODE"
 
       - name: Run pipeline
+        if: steps.gate.outputs.skip != 'true'
         env:
           CONTENT_MODE: ${{ env.CONTENT_MODE }}
           MAX_REEL_SECONDS: "58"
@@ -88,16 +154,20 @@ jobs:
         run: python pipeline.py
 
       - name: Persist rotation state
-        if: always()
+        if: always() && steps.gate.outputs.skip != 'true'
         run: |
           git config user.name "reels-agent-bot"
           git config user.email "actions@users.noreply.github.com"
-          git pull --rebase origin main || true
+          # Avoid dirty-tree rebase failures
           git add script_state.json || true
           if git diff --cached --quiet; then
             echo "No state change to commit"
           else
-            git commit -m "chore: update used-topics / script state"
-            git pull --rebase origin main
-            git push
+            git stash push -u -m "temp-before-rebase" || true
+            git pull --rebase origin main || true
+            git stash pop || true
+            git add script_state.json || true
+            git commit -m "chore: update used-topics / script state" || true
+            git pull --rebase origin main || true
+            git push || true
           fi
