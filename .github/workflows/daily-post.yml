@@ -4,10 +4,10 @@ name: Daily reel post
 # Primary:
 #   08:00 IST = 02:30 UTC
 #   20:00 IST = 14:30 UTC
-# Backup (+30 min) in case GitHub drops the primary slot:
+# Backup (+30 min):
 #   08:30 IST = 03:00 UTC
 #   20:30 IST = 15:00 UTC
-# A guard step skips if we already posted in the last 5 hours.
+# Guard skips if we already posted in the last 5 hours.
 on:
   schedule:
     - cron: "30 2 * * *"
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       content_mode:
-        description: "auto | trend | scenic"
+        description: "Pure mode: auto | trend | scenic (scenic never mixes with facts)"
         required: false
         default: "auto"
 
@@ -55,7 +55,6 @@ jobs:
               print("No last_run_date — continue")
               sys.exit(0)
           try:
-              # accept Z or +00:00
               ts = raw.replace("Z", "+00:00")
               last = datetime.fromisoformat(ts)
               if last.tzinfo is None:
@@ -66,8 +65,7 @@ jobs:
           age = datetime.now(timezone.utc) - last.astimezone(timezone.utc)
           print(f"Last run: {last.isoformat()} age={age}")
           if age < timedelta(hours=5):
-              print("SKIP: already posted within last 5 hours (avoid double from backup cron)")
-              # special exit for the job — write a marker
+              print("SKIP: already posted within last 5 hours")
               open("/tmp/skip_pipeline", "w").write("1")
               sys.exit(0)
           print("Continue: last post is old enough")
@@ -115,8 +113,14 @@ jobs:
           else
             MODE="auto"
           fi
+          # normalize common typos
+          MODE=$(echo "$MODE" | tr '[:upper:]' '[:lower:]' | xargs)
+          case "$MODE" in
+            sceinc|sceninc|scenery|travel) MODE=scenic ;;
+            facts|fact|bank|education|edu) MODE=trend ;;
+          esac
           echo "CONTENT_MODE=$MODE" >> "$GITHUB_ENV"
-          echo "Using CONTENT_MODE=$MODE"
+          echo "Using pure CONTENT_MODE=$MODE"
 
       - name: Run pipeline
         if: steps.gate.outputs.skip != 'true'
@@ -158,7 +162,6 @@ jobs:
         run: |
           git config user.name "reels-agent-bot"
           git config user.email "actions@users.noreply.github.com"
-          # Avoid dirty-tree rebase failures
           git add script_state.json || true
           if git diff --cached --quiet; then
             echo "No state change to commit"

@@ -1,6 +1,10 @@
 """
 Generate and publish one unique Reel every run.
-STRICT: never republish same/similar topic — Tesla permanently banned.
+
+Modes are PURE — never mix in one video:
+  scenic  → travel stock video + BGM only (no fact narration / no AI stills)
+  trend   → educational facts only (AI stills + optional motion B-roll matching the fact)
+  auto    → picks one pure mode for the whole run (not half/half)
 """
 
 import logging
@@ -34,11 +38,48 @@ WORK_DIR = os.path.join(os.path.dirname(__file__), "renders")
 os.makedirs(WORK_DIR, exist_ok=True)
 
 
+def _content_mode() -> str:
+    """Normalize workflow input to: auto | trend | scenic."""
+    raw = os.environ.get("CONTENT_MODE", "auto").strip().lower()
+    # common typos
+    aliases = {
+        "sceinc": "scenic",
+        "sceninc": "scenic",
+        "scenery": "scenic",
+        "travel": "scenic",
+        "facts": "trend",
+        "fact": "trend",
+        "bank": "trend",
+        "education": "trend",
+        "edu": "trend",
+    }
+    mode = aliases.get(raw, raw)
+    if mode not in ("auto", "trend", "scenic"):
+        log.warning("Unknown CONTENT_MODE=%r — using auto", raw)
+        mode = "auto"
+    return mode
+
+
 def build_caption(topic: str, source: str = "trend", extra: str = "") -> str:
-    caption = build_growth_caption(topic)
-    if extra:
-        caption = f"{caption}\n\n{extra}"
-    log.info("Caption ready (%d chars)", len(caption))
+    if source == "scenic":
+        # Pure travel caption — no educational "did you know" growth pack
+        lines = [
+            topic,
+            "",
+            "Escape the ordinary · pure scenery · no filters on wonder",
+            "Double-tap if this place is on your bucket list",
+            "Follow for daily destinations",
+            "",
+            "#travel #wanderlust #nature #shorts #reels #landscape #explore",
+        ]
+        if extra:
+            lines.extend(["", extra])
+        caption = "\n".join(lines)
+    else:
+        caption = build_growth_caption(topic)
+        if extra:
+            caption = f"{caption}\n\n{extra}"
+    log.info("Caption ready (%d chars) source=%s", len(caption), source)
     return caption
 
 
@@ -53,12 +94,18 @@ def notify(message: str) -> None:
         log.warning("Notify webhook failed: %s", e)
 
 
-def _want_scenic() -> bool:
-    mode = os.environ.get("CONTENT_MODE", "auto").strip().lower()
-    if mode == "scenic":
-        return True
-    if mode in ("trend", "bank", "facts"):
-        return False
+def _resolve_mode() -> str:
+    """
+    Decide pure mode for THIS run only.
+    auto → scenic every 3rd post if stock keys exist, else always trend.
+    Never returns a hybrid.
+    """
+    mode = _content_mode()
+    if mode in ("scenic", "trend"):
+        log.info("Forced pure mode: %s", mode)
+        return mode
+
+    # auto
     try:
         from cta import _load_state
         post_count = int((_load_state() or {}).get("post_count", 0))
@@ -68,12 +115,15 @@ def _want_scenic() -> bool:
         os.environ.get("PEXELS_API_KEY", "").strip()
         or os.environ.get("PIXABAY_API_KEY", "").strip()
     )
-    return has_stock and (post_count % 3 == 2)
+    if has_stock and (post_count % 3 == 2):
+        log.info("auto → pure SCENIC (post_count=%s)", post_count)
+        return "scenic"
+    log.info("auto → pure TREND (post_count=%s)", post_count)
+    return "trend"
 
 
 def select_script() -> dict:
-    mode = os.environ.get("CONTENT_MODE", "auto").strip().lower()
-    log.info("CONTENT_MODE=%s (strict uniqueness ON — Tesla banned)", mode)
+    log.info("Selecting TREND script (strict uniqueness)")
 
     for attempt in range(6):
         try:
@@ -93,11 +143,12 @@ def select_script() -> dict:
             log.warning("Trend attempt %d failed: %s", attempt + 1, e)
 
     log.error("STRICT: could not produce unique script — abort (no bank recycle)")
-    notify("❌ Aborted: no unique topic (Tesla and past topics blocked)")
+    notify("❌ Aborted: no unique topic")
     sys.exit(4)
 
 
 def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = None) -> tuple[str, str, list[str]]:
+    """Educational beat only — stills or fact-matched motion B-roll (not travel niche)."""
     narration = beat["narration"]
     prompt = beat.get("image_prompt") or ""
     caption = on_screen if on_screen is not None else narration
@@ -107,6 +158,8 @@ def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = No
     clip_path = os.path.join(run_dir, f"beat{i}.mp4")
     generate_narration(narration, audio_path)
 
+    # Motion B-roll only when the FACT prompt needs real movement (water, clouds…)
+    # Never inject random travel scenery into a science topic.
     motion = None
     try:
         motion = find_motion_clip(prompt)
@@ -137,8 +190,10 @@ def _build_one_beat(beat: dict, run_dir: str, i: int, on_screen: str | None = No
 
 
 def run_scenic(run_dir: str) -> None:
+    """PURE scenic: one continuous travel stock clip + BGM. No fact beats."""
     from scenic_gen import build_scenic_reel
 
+    log.info("=== PURE SCENIC MODE (no trend content) ===")
     result = build_scenic_reel(run_dir)
     topic = result["topic"]
     place = result.get("place")
@@ -149,6 +204,9 @@ def run_scenic(run_dir: str) -> None:
         sys.exit(5)
 
     final_path = result["final_path"]
+    if not os.path.isfile(final_path):
+        raise RuntimeError(f"Scenic final missing: {final_path}")
+
     caption = build_caption(topic, source="scenic", extra=result.get("credit", ""))
     safe, reason = check_content_safe(caption, result.get("narration_text", topic))
     if not safe:
@@ -167,7 +225,7 @@ def run_scenic(run_dir: str) -> None:
             stock_id=stock.get("id"),
             fingerprint_parts=[result.get("narration_text", "")],
         )
-        notify(f"✅ Scenic Reel: {topic}\nmedia_id={media_id}")
+        notify(f"✅ Pure SCENIC Reel: {topic}\nmedia_id={media_id}")
         try:
             delete_public_object(video_url)
             cleanup_old_media()
@@ -179,6 +237,8 @@ def run_scenic(run_dir: str) -> None:
 
 
 def run_facts() -> None:
+    """PURE trend/facts: educational beats only."""
+    log.info("=== PURE TREND/FACTS MODE (no scenic niche) ===")
     script = select_script()
     source = script.get("source", "trend")
     topic = script["topic"]
@@ -225,12 +285,11 @@ def run_facts() -> None:
         final_path = os.path.join(run_dir, "final.mp4")
         concat_clips(clip_paths, final_path)
 
-        # Final text gate on whole narration
         if is_duplicate_script(topic, full_narration, prompts):
             log.error("STRICT final gate blocked: %s", topic)
             sys.exit(5)
 
-        caption = build_caption(topic, source=source)
+        caption = build_caption(topic, source="trend")
         safe, reason = check_content_safe(
             caption, " ".join(full_narration[:-1]) or " ".join(full_narration)
         )
@@ -249,7 +308,7 @@ def run_facts() -> None:
                 fingerprint_parts=full_narration[:3],
                 stock_ids=all_stock_ids,
             )
-            notify(f"✅ Published [{source}]: {topic}\nmedia_id={media_id}")
+            notify(f"✅ Pure TREND Reel: {topic}\nmedia_id={media_id}")
             try:
                 delete_public_object(video_url)
                 cleanup_old_media()
@@ -268,22 +327,28 @@ def run_facts() -> None:
 
 
 def run_once() -> None:
-    if _want_scenic():
+    mode = _resolve_mode()
+    log.info("RUN MODE (pure)=%s", mode)
+
+    if mode == "scenic":
         run_id = uuid.uuid4().hex[:8]
         run_dir = os.path.join(WORK_DIR, run_id)
         os.makedirs(run_dir, exist_ok=True)
-        log.info("Running SCENIC (strict unique)")
         try:
             run_scenic(run_dir)
         except Exception as e:
-            log.exception("Scenic failed — facts fallback: %s", e)
-            notify(f"⚠️ Scenic failed, trying facts: {e}")
-            run_facts()
+            # CRITICAL: explicit scenic must NEVER silently become a fact reel
+            log.exception("Scenic failed — aborting (no facts hybrid)")
+            notify(
+                f"❌ SCENIC mode failed — not falling back to facts (avoids hybrid).\n{e}"
+            )
+            sys.exit(6)
         finally:
             if os.environ.get("CLEANUP_RENDERS", "1") == "1":
                 shutil.rmtree(run_dir, ignore_errors=True)
         return
 
+    # trend (or auto→trend)
     run_facts()
 
 
