@@ -1,18 +1,15 @@
-"""
-Unique short Reel scripts. Strict no-repeat via uniqueness module.
-"""
+"""Unique short Reel scripts. Strict no-repeat via uniqueness module."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from typing import Any
 
 from trend_scout import fetch_niche_trends
 from llm_client import generate_text
-from uniqueness import is_duplicate_topic, is_topic_used, record_used_topic, _load
+from uniqueness import is_duplicate_topic, is_duplicate_script, _load
 
 log = logging.getLogger("trend_script")
 
@@ -26,17 +23,15 @@ HARD LIMITS:
 - Accurate, cautious. Breaking news: "reports say" / "scientists published".
 - image_prompt: cinematic, no people, vertical, no text in image.
 
-FORBIDDEN TOPICS (never write about these):
+FORBIDDEN TOPICS (never write about these or close variants):
+- Nikola Tesla, Wardenclyffe Tower, wireless power towers, J.P. Morgan funding Tesla
 - Medical advice, diseases, treatments, genes-as-therapy, mental health disorders
-- Alzheimer's, cancer, diabetes, vaccines, clinical trials, patient outcomes
-- Financial or legal advice; attacks on living private people
-- ANY topic on the avoid list below (or close variants)
-Prefer: space, archaeology, ancient tech, physics curiosities, animals, geology, classic science history.
+- Alzheimer's, cancer, diabetes, vaccines, clinical trials
+- ANY topic on the avoid list below
+Prefer: space, archaeology, ancient tech (NOT Tesla), physics curiosities, animals, geology, classic science history.
 
 HOOK RULES:
 - Beat 1 MUST be a scroll-stopping HOOK — not a soft intro.
-- Good: shock, paradox, "scientists were wrong", direct question.
-- Bad: "Today we talk about…", "Let's learn about…".
 
 Respond with ONLY valid JSON:
 {"topic": "short title under 90 chars", "beats": [{"narration": "...", "image_prompt": "..."}]}
@@ -86,7 +81,7 @@ def _validate_script(data: dict) -> dict | None:
 
 def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
     try:
-        raw = generate_text(SYSTEM, prompt, max_tokens=900, temperature=0.75)
+        raw = generate_text(SYSTEM, prompt, max_tokens=900, temperature=0.8)
     except Exception as e:
         log.error("Script LLM failed: %s", e)
         return None
@@ -95,34 +90,27 @@ def _generate_from_prompt(prompt: str) -> dict[str, Any] | None:
     if not script:
         log.warning("Invalid script JSON: %s", (raw or "")[:180])
         return None
-    if is_duplicate_topic(script["topic"]):
-        log.warning("STRICT reject used/similar topic: %s", script["topic"])
+    narrs = [b["narration"] for b in script["beats"]]
+    prompts = [b["image_prompt"] for b in script["beats"]]
+    if is_duplicate_script(script["topic"], narrs, prompts):
+        log.warning("STRICT reject used/similar script: %s", script["topic"])
         return None
-    # also reject if any beat narration collides strongly with topic history
-    for b in script["beats"]:
-        if is_duplicate_topic(b["narration"][:90]):
-            log.warning("STRICT reject similar narration: %s", b["narration"][:60])
-            return None
     log.info("Script topic: %s (%d beats)", script["topic"], len(script["beats"]))
     return script
 
 
 def generate_trend_script() -> dict[str, Any] | None:
     used = list((_load().get("used_topics") or []))
-    avoid = ""
-    if used:
-        avoid = (
-            "\n\nSTRICT AVOID — do NOT reuse these topics or close variants:\n"
-            + "\n".join(f"- {u}" for u in used[-60:])
-            + "\nInvent a clearly DIFFERENT subject."
-        )
+    avoid = (
+        "\n\nSTRICT AVOID — never reuse these or close variants:\n"
+        "- Nikola Tesla / Wardenclyffe / wireless power tower\n"
+        + ("\n".join(f"- {u}" for u in used[-60:]) if used else "")
+        + "\nInvent a clearly DIFFERENT subject."
+    )
 
     trends = fetch_niche_trends(max_items=20)
     if trends:
         fresh = [t for t in trends if not is_duplicate_topic(t["title"])]
-        if not fresh:
-            log.warning("All trend headlines look used — inventing instead")
-            fresh = []
         if fresh:
             lines = [
                 f"{i}. [{t['subreddit']}] {t['title']}"
@@ -130,9 +118,8 @@ def generate_trend_script() -> dict[str, Any] | None:
             ]
             prompt = (
                 "Pick ONE fresh headline for a short educational Reel "
-                "(space, archaeology, physics, nature, ancient tech — NOT medical/disease). "
-                "Must be unique — never a repeat or near-repeat.\n"
-                "Hard HOOK in beat 1.\n\n"
+                "(space, archaeology, physics, nature, ancient tech — NOT Tesla, NOT medical). "
+                "Must be unique.\nHard HOOK in beat 1.\n\n"
                 + "\n".join(lines)
                 + avoid
                 + "\n\nWrite the Reel script JSON (3–4 short beats)."
@@ -141,14 +128,12 @@ def generate_trend_script() -> dict[str, Any] | None:
             if script:
                 return script
 
-    log.warning("Asking LLM to invent a unique educational topic")
+    log.warning("Inventing a unique educational topic (no Tesla)")
     invent = (
         "Invent ONE unique educational Reel topic in space, archaeology, physics, "
-        "nature, or classic science history — NOT medical or disease.\n"
+        "nature, or classic science history — NOT Tesla, NOT medical.\n"
         "Beat 1 must be a scroll-stopping hook.\n"
-        "The topic MUST be completely different from every item on the avoid list.\n"
         + avoid
         + "\n\nWrite the Reel script JSON (3–4 short beats)."
     )
-    # more attempts with higher temperature path via retries at caller
     return _generate_from_prompt(invent)
