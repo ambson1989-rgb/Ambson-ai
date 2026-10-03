@@ -1,17 +1,11 @@
 """
-Scenic places niche: real licensed stock video + matching BGM.
+Scenic / travel niche:
+1) Scout trending travel locations
+2) Find matching licensed stock video (Pexels / Pixabay — real camera, not scraped IG/TT)
+3) Add vibe-matched BGM
+4) Encode clean 1080x1920 for Instagram Reels (IG does not deliver 8K)
 
-IMPORTANT
-- We do NOT scrape random websites / YouTube (copyright).
-- Sources: Pexels and/or Pixabay (free commercial licence, real camera footage).
-- Instagram Reels do NOT support true 8K delivery. Spec is effectively
-  1080x1920 (max width ~1920). We always pick the highest-quality stock
-  file available, then encode clean 1080x1920 for IG.
-
-Secrets:
-  PEXELS_API_KEY   — https://www.pexels.com/api/
-  PIXABAY_API_KEY  — https://pixabay.com/api/docs/ (fallback)
-  SCENIC_BGM_URL   — optional direct URL to a royalty-free MP3 you host
+Secrets: PEXELS_API_KEY, PIXABAY_API_KEY, optional SCENIC_BGM_URL
 """
 
 from __future__ import annotations
@@ -19,58 +13,33 @@ from __future__ import annotations
 import logging
 import os
 import random
-import re
 import subprocess
-import tempfile
 from typing import Any
 
 import requests
+
+from travel_scout import fetch_trending_travel
 
 log = logging.getLogger("scenic_gen")
 
 PEXELS_VIDEOS = "https://api.pexels.com/videos/search"
 PIXABAY_VIDEOS = "https://pixabay.com/api/videos/"
 
-# Places / landscape queries — real professional stock, not AI stills
-SCENIC_QUERIES = [
-    "mountain landscape aerial",
-    "ocean waves coastline drone",
-    "forest mist morning",
-    "desert sand dunes sunset",
-    "northern lights aurora",
-    "waterfall tropical",
-    "snowy peaks aerial",
-    "lavender field sunset",
-    "cliff ocean europe",
-    "sakura cherry blossom park",
-    "swiss alps lake",
-    "iceland waterfall",
-    "bali rice terraces",
-    "grand canyon aerial",
-    "japanese garden pond",
-    "tuscany hills sunrise",
-    "patagonia mountains",
-    "maldives beach clear water",
-    "norwegian fjord",
-    "sahara desert sunrise",
-]
-
-# Mood → music search terms (Pixabay) / default vibe label
 VIBE_MUSIC = {
     "calm": ["ambient calm piano", "peaceful nature ambient"],
     "epic": ["cinematic ambient epic", "inspiring orchestral ambient"],
     "warm": ["warm acoustic sunset", "soft guitar ambient"],
-    "mystical": [" ethereal ambient", "space ambient soft"],
+    "mystical": ["ethereal ambient", "space ambient soft"],
 }
 
 
 def _vibe_for_query(q: str) -> str:
-    q = q.lower()
-    if any(w in q for w in ("northern", "aurora", "mist", "forest", "night")):
+    q = (q or "").lower()
+    if any(w in q for w in ("northern", "aurora", "mist", "night", "cappadocia", "balloon")):
         return "mystical"
-    if any(w in q for w in ("mountain", "alps", "canyon", "drone", "aerial", "peak")):
+    if any(w in q for w in ("mountain", "alps", "canyon", "drone", "aerial", "peak", "fjord", "himalaya")):
         return "epic"
-    if any(w in q for w in ("sunset", "desert", "tuscany", "lavender", "warm")):
+    if any(w in q for w in ("sunset", "desert", "tuscany", "warm", "bali", "maldives", "beach")):
         return "warm"
     return "calm"
 
@@ -88,7 +57,7 @@ def _best_pexels_file(video: dict) -> dict | None:
     files = video.get("video_files") or []
     if not files:
         return None
-    # Prefer tall 9:16-ish, then highest pixel count
+
     def score(f: dict) -> tuple:
         w = int(f.get("width") or 0)
         h = int(f.get("height") or 0)
@@ -97,8 +66,7 @@ def _best_pexels_file(video: dict) -> dict | None:
 
     ranked = sorted(files, key=score, reverse=True)
     for f in ranked:
-        link = f.get("link")
-        if link:
+        if f.get("link"):
             return f
     return None
 
@@ -108,34 +76,39 @@ def _search_pexels(query: str) -> dict | None:
     if not key:
         return None
     try:
-        resp = requests.get(
-            PEXELS_VIDEOS,
-            headers={"Authorization": key},
-            params={"query": query, "per_page": 15, "orientation": "portrait"},
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            log.warning("Pexels HTTP %s: %s", resp.status_code, resp.text[:160])
-            return None
-        videos = resp.json().get("videos") or []
-        random.shuffle(videos)
-        for v in videos:
-            best = _best_pexels_file(v)
-            if not best:
+        # Try portrait first, then any orientation (travel stock is often landscape drone)
+        for orientation in ("portrait", None):
+            params: dict[str, Any] = {"query": query, "per_page": 15}
+            if orientation:
+                params["orientation"] = orientation
+            resp = requests.get(
+                PEXELS_VIDEOS,
+                headers={"Authorization": key},
+                params=params,
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                log.warning("Pexels HTTP %s", resp.status_code)
                 continue
-            w, h = int(best.get("width") or 0), int(best.get("height") or 0)
-            if w * h < 720 * 1280:
-                continue
-            return {
-                "source": "pexels",
-                "id": v.get("id"),
-                "url": best["link"],
-                "width": w,
-                "height": h,
-                "duration": int(v.get("duration") or 0),
-                "photographer": (v.get("user") or {}).get("name") or "Pexels",
-                "query": query,
-            }
+            videos = resp.json().get("videos") or []
+            random.shuffle(videos)
+            for v in videos:
+                best = _best_pexels_file(v)
+                if not best:
+                    continue
+                w, h = int(best.get("width") or 0), int(best.get("height") or 0)
+                if w * h < 640 * 360:
+                    continue
+                return {
+                    "source": "pexels",
+                    "id": v.get("id"),
+                    "url": best["link"],
+                    "width": w,
+                    "height": h,
+                    "duration": int(v.get("duration") or 0),
+                    "photographer": (v.get("user") or {}).get("name") or "Pexels",
+                    "query": query,
+                }
     except Exception as e:
         log.warning("Pexels search failed: %s", e)
     return None
@@ -164,7 +137,6 @@ def _search_pixabay(query: str) -> dict | None:
         random.shuffle(hits)
         for h in hits:
             videos = h.get("videos") or {}
-            # Prefer large / medium
             for quality in ("large", "medium", "small", "tiny"):
                 vf = videos.get(quality) or {}
                 url = vf.get("url")
@@ -189,33 +161,54 @@ def _search_pixabay(query: str) -> dict | None:
     return None
 
 
-def _pick_stock() -> dict:
-    queries = list(SCENIC_QUERIES)
-    random.shuffle(queries)
+def _pick_stock_for_trends() -> tuple[dict, dict]:
+    """
+    Prefer trending travel locations; try stock search per location.
+    Returns (stock_meta, trend_meta).
+    """
+    trends = fetch_trending_travel(max_items=14)
+    random.shuffle(trends)  # avoid always same top headline
+    # Prefer higher score but still shuffle within top
+    trends = sorted(trends, key=lambda x: x.get("score", 0), reverse=True)
+
     last_err = None
-    for q in queries[:8]:
+    for t in trends:
+        query = t["query"]
+        log.info("Trying stock for trending place %s → %r", t["place"], query)
         for searcher in (_search_pexels, _search_pixabay):
             try:
-                hit = searcher(q)
+                hit = searcher(query)
                 if hit:
+                    # Also try simpler place name if needed — already have hit
                     log.info(
-                        "Scenic stock: %s id=%s %sx%s query=%r",
+                        "Matched %s via %s id=%s %sx%s",
+                        t["place"],
                         hit["source"],
                         hit["id"],
                         hit["width"],
                         hit["height"],
-                        q,
                     )
-                    return hit
+                    return hit, t
             except Exception as e:
                 last_err = e
+        # Fallback: search just the place name
+        simple = f"{t['place']} travel landscape"
+        for searcher in (_search_pexels, _search_pixabay):
+            try:
+                hit = searcher(simple)
+                if hit:
+                    log.info("Matched %s (simple query) via %s", t["place"], hit["source"])
+                    return hit, t
+            except Exception as e:
+                last_err = e
+
     raise RuntimeError(
-        f"No scenic stock video found. Set PEXELS_API_KEY and/or PIXABAY_API_KEY. last={last_err}"
+        f"No stock video for trending travel locations. "
+        f"Set PEXELS_API_KEY and/or PIXABAY_API_KEY. last={last_err}"
     )
 
 
 def _fetch_bgm(vibe: str, out_mp3: str) -> bool:
-    # 1) Explicit hosted royalty-free track
     url = os.environ.get("SCENIC_BGM_URL", "").strip()
     if url:
         try:
@@ -225,11 +218,9 @@ def _fetch_bgm(vibe: str, out_mp3: str) -> bool:
         except Exception as e:
             log.warning("SCENIC_BGM_URL failed: %s", e)
 
-    # 2) Pixabay audio (if key supports music search)
     key = os.environ.get("PIXABAY_API_KEY", "").strip()
     if key:
-        terms = VIBE_MUSIC.get(vibe, VIBE_MUSIC["calm"])
-        for term in terms:
+        for term in VIBE_MUSIC.get(vibe, VIBE_MUSIC["calm"]):
             try:
                 resp = requests.get(
                     "https://pixabay.com/api/",
@@ -245,28 +236,21 @@ def _fetch_bgm(vibe: str, out_mp3: str) -> bool:
                 if resp.status_code != 200:
                     continue
                 hits = resp.json().get("hits") or []
-                if not hits:
-                    continue
                 random.shuffle(hits)
                 for h in hits:
                     audio_url = h.get("url") or h.get("previewURL")
-                    # Pixabay music often has url field on full license pages;
-                    # preview may be short — still usable as bed.
                     if not audio_url:
                         continue
-                    if not audio_url.endswith((".mp3", ".wav", ".ogg")):
-                        # try alternate keys
-                        audio_url = h.get("audio") or audio_url
                     try:
                         _download(audio_url, out_mp3)
-                        log.info("BGM from Pixabay music term=%r", term)
+                        log.info("BGM Pixabay term=%r", term)
                         return True
                     except Exception:
                         continue
             except Exception as e:
-                log.warning("Pixabay music search failed: %s", e)
+                log.warning("Pixabay music failed: %s", e)
 
-    log.warning("No BGM available — scenic will use soft generated ambient pad")
+    log.warning("No BGM — quiet pad fallback")
     return False
 
 
@@ -276,8 +260,6 @@ def _ffmpeg_scenic(
     video_out: str,
     max_seconds: float = 45.0,
 ) -> None:
-    """Crop/scale to 1080x1920, high quality H.264, mix BGM."""
-    # Scale to cover 1080x1920 then center crop — cinematic vertical
     vf = (
         "scale=1080:1920:force_original_aspect_ratio=increase,"
         "crop=1080:1920,"
@@ -302,7 +284,6 @@ def _ffmpeg_scenic(
             video_out,
         ]
     else:
-        # Soft low sine pad so IG has an audio track (very quiet)
         cmd = [
             "ffmpeg", "-y",
             "-i", video_in,
@@ -327,35 +308,26 @@ def _ffmpeg_scenic(
 
 
 def build_scenic_reel(work_dir: str) -> dict[str, Any]:
-    """
-    Download real stock scenery + BGM, encode IG-ready vertical MP4.
-    Returns dict with topic, final_path, caption bits, source meta.
-    """
     os.makedirs(work_dir, exist_ok=True)
-    stock = _pick_stock()
-    vibe = _vibe_for_query(stock["query"])
+    stock, trend = _pick_stock_for_trends()
+    vibe = _vibe_for_query(stock["query"] + " " + trend.get("place", ""))
 
     raw_path = os.path.join(work_dir, "scenic_raw.mp4")
     bgm_path = os.path.join(work_dir, "scenic_bgm.mp3")
     final_path = os.path.join(work_dir, "final.mp4")
 
-    log.info("Downloading scenic video…")
+    log.info("Downloading matching travel stock for %s…", trend.get("place"))
     _download(stock["url"], raw_path)
 
     has_bgm = _fetch_bgm(vibe, bgm_path)
-    max_sec = float(os.environ.get("MAX_REEL_SECONDS", "58"))
-    max_sec = min(max_sec, 45.0)  # scenic clips stay punchy
+    max_sec = min(float(os.environ.get("MAX_REEL_SECONDS", "58")), 45.0)
+    _ffmpeg_scenic(raw_path, bgm_path if has_bgm else None, final_path, max_seconds=max_sec)
 
-    _ffmpeg_scenic(
-        raw_path,
-        bgm_path if has_bgm else None,
-        final_path,
-        max_seconds=max_sec,
-    )
-
-    place = stock["query"].strip().title()
-    topic = f"Scenic escape: {place}"
-    # Credit stock (good practice; Pexels asks for attribution when using API)
+    place = trend.get("place") or "Wanderlust"
+    topic = f"Trending escape: {place}"
+    if trend.get("headline") and trend.get("source") != "evergreen":
+        # Keep caption topic short; headline informs engagement caption body optionally
+        pass
     credit = f"Video: {stock['photographer']} via {stock['source'].title()}"
 
     return {
@@ -365,5 +337,9 @@ def build_scenic_reel(work_dir: str) -> dict[str, Any]:
         "vibe": vibe,
         "credit": credit,
         "stock": stock,
-        "narration_text": f"A quiet look at {place}. {credit}.",
+        "trend": trend,
+        "narration_text": (
+            f"Trending travel destination look: {place}. "
+            f"Cinematic location footage. {credit}."
+        ),
     }
