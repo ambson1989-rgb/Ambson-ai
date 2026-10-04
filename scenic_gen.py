@@ -1,4 +1,4 @@
-"""Pure scenic reel — fixed audio validation."""
+"""Pure scenic reel — fixed audio validation + full target duration."""
 from __future__ import annotations
 import logging, os, random, re, subprocess
 from typing import Any
@@ -140,7 +140,7 @@ def _fetch_bgm(vibe: str, out_mp3: str) -> bool:
                 hits = resp.json().get("hits") or []
                 random.shuffle(hits)
                 for h in hits:
-                    audio_url = h.get("url")  # never previewURL (JPEG)
+                    audio_url = h.get("url")
                     if audio_url and try_url(str(audio_url), f"pixabay:{term}"): return True
             except Exception as e:
                 log.warning("pixabay music: %s", e)
@@ -177,38 +177,85 @@ def _wrap_caption(text: str, width: int = 28) -> str:
     return "\n".join(lines[:4])
 
 def _make_main_clip(raw_video, bgm_path, voice_path, caption_lines, out_path, target_sec):
+    """Loop video to target_sec. NEVER use -shortest (that cut us to TTS length)."""
     caption_path = out_path + ".cap.txt"
     with open(caption_path, "w", encoding="utf-8") as f:
         f.write(_wrap_caption("  ·  ".join(caption_lines)))
     font = os.path.join(os.path.dirname(__file__), "fonts", "Montserrat-Bold.ttf")
     if not os.path.isfile(font):
         font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    draw = f"drawtext=fontfile='{font}':textfile='{caption_path}':fontsize=42:fontcolor=white:borderw=3:bordercolor=black@0.7:x=(w-text_w)/2:y=h*0.72:line_spacing=12"
-    vf = f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,eq=contrast=1.08:saturation=1.12:brightness=0.02,unsharp=5:5:0.6,{draw}"
-    inputs = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", raw_video]
-    n = 0
-    voice_idx = bgm_idx = None
-    if voice_path and _is_audio_file(voice_path):
-        inputs += ["-i", voice_path]; voice_idx = 1 + n; n += 1
-    if bgm_path and _is_audio_file(bgm_path):
-        inputs += ["-stream_loop", "-1", "-i", bgm_path]; bgm_idx = 1 + n; n += 1
-    if voice_idx is not None and bgm_idx is not None:
-        fc = f"[{voice_idx}:a]volume=1.0,aformat=sample_rates=44100:channel_layouts=stereo[v];[{bgm_idx}:a]volume=0.22,aformat=sample_rates=44100:channel_layouts=stereo[b];[v][b]amix=inputs=2:duration=first:dropout_transition=2[aout]"
-        extra, map_a = ["-filter_complex", fc], ["-map", "[aout]"]
-    elif voice_idx is not None:
-        extra, map_a = [], ["-map", f"{voice_idx}:a"]
-    elif bgm_idx is not None:
-        extra, map_a = [], ["-map", f"{bgm_idx}:a"]
+    draw = (
+        f"drawtext=fontfile='{font}':textfile='{caption_path}':"
+        f"fontsize=42:fontcolor=white:borderw=3:bordercolor=black@0.7:"
+        f"x=(w-text_w)/2:y=h*0.72:line_spacing=12"
+    )
+    vf = (
+        f"scale=1080:1920:force_original_aspect_ratio=increase,"
+        f"crop=1080:1920,"
+        f"eq=contrast=1.08:saturation=1.12:brightness=0.02,"
+        f"unsharp=5:5:0.6,{draw}"
+    )
+
+    # Build full-length mixed audio first (voice padded + looping BGM)
+    mixed_audio = out_path + ".mixed.m4a"
+    t = f"{target_sec:.2f}"
+    if voice_path and _is_audio_file(voice_path) and bgm_path and _is_audio_file(bgm_path):
+        # voice: pad with silence to target; bgm: loop then trim
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-i", voice_path,
+            "-stream_loop", "-1", "-i", bgm_path,
+            "-filter_complex",
+            f"[0:a]aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={t},atrim=0:{t},volume=1.0[v];"
+            f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{t},volume=0.25[b];"
+            f"[v][b]amix=inputs=2:duration=longest:dropout_transition=0[aout]",
+            "-map", "[aout]", "-t", t, "-c:a", "aac", "-b:a", "192k", mixed_audio,
+        ])
+    elif voice_path and _is_audio_file(voice_path):
+        _run_ffmpeg([
+            "ffmpeg", "-y", "-i", voice_path,
+            "-af", f"aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={t},atrim=0:{t}",
+            "-t", t, "-c:a", "aac", "-b:a", "192k", mixed_audio,
+        ])
+    elif bgm_path and _is_audio_file(bgm_path):
+        _run_ffmpeg([
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", bgm_path,
+            "-af", f"aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{t},volume=0.35",
+            "-t", t, "-c:a", "aac", "-b:a", "192k", mixed_audio,
+        ])
     else:
-        inputs += ["-f", "lavfi", "-i", "sine=frequency=200:sample_rate=44100"]
-        extra, map_a = ["-filter_complex", "[1:a]volume=0.15[aout]"], ["-map", "[aout]"]
-    cmd = inputs + ["-t", str(target_sec), "-vf", vf, *extra, "-map", "0:v:0", *map_a, "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out_path]
+        _run_ffmpeg([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", f"sine=frequency=200:sample_rate=44100:duration={t}",
+            "-af", "volume=0.12", "-c:a", "aac", "-b:a", "128k", mixed_audio,
+        ])
+
+    if not _is_audio_file(mixed_audio):
+        raise RuntimeError("Failed to build full-length mixed audio")
+
+    # Loop video for exact target_sec, mux pre-built audio — NO -shortest
+    cmd = [
+        "ffmpeg", "-y",
+        "-stream_loop", "-1", "-i", raw_video,
+        "-i", mixed_audio,
+        "-t", t,
+        "-vf", vf,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "17",
+        "-pix_fmt", "yuv420p", "-r", "30",
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        out_path,
+    ]
     try:
         _run_ffmpeg(cmd)
     finally:
         if os.path.exists(caption_path): os.remove(caption_path)
+        if os.path.exists(mixed_audio):
+            try: os.remove(mixed_audio)
+            except OSError: pass
+
     dur = _probe_duration(out_path)
-    log.info("Scenic main duration=%.1fs", dur)
+    log.info("Scenic main duration=%.1fs (target=%.1fs)", dur, target_sec)
     if dur < MIN_SECONDS:
         raise RuntimeError(f"Scenic too short ({dur:.1f}s)")
 
