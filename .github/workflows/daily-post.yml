@@ -17,9 +17,9 @@ on:
   workflow_dispatch:
     inputs:
       content_mode:
-        description: "Pure mode: auto | trend | scenic (scenic never mixes with facts)"
+        description: "trend only (scenic disabled)"
         required: false
-        default: "auto"
+        default: "trend"
 
 permissions:
   contents: write
@@ -107,25 +107,14 @@ jobs:
       - name: Resolve content mode
         if: steps.gate.outputs.skip != 'true'
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            MODE="${{ github.event.inputs.content_mode }}"
-            MODE="${MODE:-auto}"
-          else
-            MODE="auto"
-          fi
-          # normalize common typos
-          MODE=$(echo "$MODE" | tr '[:upper:]' '[:lower:]' | xargs)
-          case "$MODE" in
-            sceinc|sceninc|scenery|travel) MODE=scenic ;;
-            facts|fact|bank|education|edu) MODE=trend ;;
-          esac
-          echo "CONTENT_MODE=$MODE" >> "$GITHUB_ENV"
-          echo "Using pure CONTENT_MODE=$MODE"
+          # Scenic permanently disabled — always trend
+          echo "CONTENT_MODE=trend" >> "$GITHUB_ENV"
+          echo "Using CONTENT_MODE=trend (scenic disabled)"
 
       - name: Run pipeline
         if: steps.gate.outputs.skip != 'true'
         env:
-          CONTENT_MODE: ${{ env.CONTENT_MODE }}
+          CONTENT_MODE: trend
           MAX_REEL_SECONDS: "58"
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
@@ -143,7 +132,6 @@ jobs:
           CF_IMAGE_MODEL: ${{ secrets.CF_IMAGE_MODEL }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
-          SCENIC_BGM_URL: ${{ secrets.SCENIC_BGM_URL }}
           PUBLIC_MEDIA_BUCKET: ${{ secrets.PUBLIC_MEDIA_BUCKET }}
           PUBLIC_MEDIA_ACCESS_KEY: ${{ secrets.PUBLIC_MEDIA_ACCESS_KEY }}
           PUBLIC_MEDIA_SECRET_KEY: ${{ secrets.PUBLIC_MEDIA_SECRET_KEY }}
