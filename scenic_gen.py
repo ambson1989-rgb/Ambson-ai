@@ -1,5 +1,6 @@
 """
-Scenic / travel niche with strict no-repeat places + stock IDs.
+Scenic / travel niche — pure stock video + BGM.
+Place uniqueness via used_places only (no filler-word false bans).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 import requests
 
 from travel_scout import fetch_trending_travel
-from uniqueness import is_place_used, is_stock_used, is_duplicate_topic
+from uniqueness import is_place_used, is_stock_used
 
 log = logging.getLogger("scenic_gen")
 
@@ -161,14 +162,12 @@ def _search_pixabay(query: str) -> dict | None:
 
 def _pick_stock_for_trends() -> tuple[dict, dict]:
     trends = fetch_trending_travel(max_items=18)
-    # Drop places already posted
     trends = [t for t in trends if not is_place_used(t.get("place", ""))]
     if not trends:
-        raise RuntimeError("All trending travel places already used — strict uniqueness")
+        raise RuntimeError("All listed travel places already used — try again later")
 
     trends = sorted(trends, key=lambda x: x.get("score", 0), reverse=True)
-    # shuffle top half so we don't always take #1
-    top = trends[:10]
+    top = trends[:12]
     random.shuffle(top)
 
     last_err = None
@@ -176,20 +175,13 @@ def _pick_stock_for_trends() -> tuple[dict, dict]:
         place = t.get("place", "")
         if is_place_used(place):
             continue
-        if is_duplicate_topic(f"Trending escape: {place}"):
-            continue
         query = t["query"]
         log.info("Trying stock for NEW place %s → %r", place, query)
         for searcher in (_search_pixabay, _search_pexels):
             try:
                 hit = searcher(query)
                 if hit and not is_stock_used(hit["source"], hit["id"]):
-                    log.info(
-                        "Matched NEW %s via %s id=%s",
-                        place,
-                        hit["source"],
-                        hit["id"],
-                    )
+                    log.info("Matched NEW %s via %s id=%s", place, hit["source"], hit["id"])
                     return hit, t
             except Exception as e:
                 last_err = e
@@ -203,7 +195,7 @@ def _pick_stock_for_trends() -> tuple[dict, dict]:
                 last_err = e
 
     raise RuntimeError(
-        f"No unused stock for unused travel places (strict mode). last={last_err}"
+        f"No unused stock for unused travel places. last={last_err}"
     )
 
 
@@ -305,10 +297,11 @@ def build_scenic_reel(work_dir: str) -> dict[str, Any]:
     _ffmpeg_scenic(raw_path, bgm_path if has_bgm else None, final_path, max_seconds=max_sec)
 
     place = trend.get("place") or "Wanderlust"
-    topic = f"Trending escape: {place}"
-    if is_duplicate_topic(topic) or is_place_used(place):
+    if is_place_used(place):
         raise RuntimeError(f"Strict uniqueness blocked scenic place: {place}")
 
+    # Topic format without filler words that used to self-ban via "trending"
+    topic = f"Travel: {place}"
     credit = f"Video: {stock['photographer']} via {stock['source'].title()}"
     return {
         "topic": topic,
@@ -319,5 +312,5 @@ def build_scenic_reel(work_dir: str) -> dict[str, Any]:
         "stock": stock,
         "trend": trend,
         "place": place,
-        "narration_text": f"Trending travel destination: {place}. {credit}.",
+        "narration_text": f"Travel destination: {place}. {credit}.",
     }
