@@ -1,19 +1,27 @@
 name: Daily reel post
 
-# Target: 08:00 and 20:00 IST (GitHub cron is UTC and often delayed/skipped).
-# Primary:
-#   08:00 IST = 02:30 UTC
-#   20:00 IST = 14:30 UTC
-# Backup (+30 min):
-#   08:30 IST = 03:00 UTC
-#   20:30 IST = 15:00 UTC
-# Guard skips if we already posted in the last 5 hours.
+# Normal days: 08:00 + 20:00 IST (with +30min backups).
+# TODAY ONLY (2026-10-04 IST): also fire every ~3 hours.
+#
+# UTC slots (IST = UTC+5:30):
+#   02:30 / 03:00  → 08:00 / 08:30 IST
+#   06:30          → 12:00 IST  (boost day)
+#   09:30          → 15:00 IST  (boost day)
+#   12:30          → 18:00 IST  (boost day)
+#   14:30 / 15:00  → 20:00 / 20:30 IST
+#   15:30          → 21:00 IST  (boost day)
+#   18:30          → 00:00 IST next (boost day edge)
 on:
   schedule:
     - cron: "30 2 * * *"
     - cron: "0 3 * * *"
+    - cron: "30 6 * * *"
+    - cron: "30 9 * * *"
+    - cron: "30 12 * * *"
     - cron: "30 14 * * *"
     - cron: "0 15 * * *"
+    - cron: "30 15 * * *"
+    - cron: "30 18 * * *"
   workflow_dispatch:
     inputs:
       content_mode:
@@ -34,13 +42,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Skip if already posted recently (schedule only)
+      - name: Schedule gate (boost day vs normal)
         if: github.event_name == 'schedule'
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, os, sys
-          from datetime import datetime, timezone, timedelta
+          from datetime import datetime, timezone, timedelta, date
+
+          IST = timezone(timedelta(hours=5, minutes=30))
+          now_ist = datetime.now(IST)
+          today = now_ist.date()
+          hour = now_ist.hour
+          minute = now_ist.minute
+
+          BOOST_DAY = date(2026, 10, 4)  # every 3h today only
+
+          print(f"IST now={now_ist.isoformat()} date={today} hour={hour}")
+
+          def mark_skip(reason: str) -> None:
+              print("SKIP:", reason)
+              open("/tmp/skip_pipeline", "w").write("1")
+
+          # --- date / slot policy ---
+          if today == BOOST_DAY:
+              # Allow posts all day; anti-spam window ~2h45m below
+              print("BOOST DAY: every ~3 hours allowed")
+          else:
+              # Normal days: only morning (~8) or evening (~20) IST windows
+              morning = 7 <= hour <= 9
+              evening = 19 <= hour <= 21
+              if not (morning or evening):
+                  mark_skip(f"normal day — outside 8AM/8PM windows (hour={hour})")
+                  sys.exit(0)
+              print("Normal day — inside AM/PM window")
+
+          # --- recently posted? ---
           path = "script_state.json"
           if not os.path.exists(path):
               print("No script_state.json — continue")
@@ -50,6 +87,7 @@ jobs:
           except Exception as e:
               print("Could not read state:", e)
               sys.exit(0)
+
           raw = (data.get("last_run_date") or "").strip()
           if not raw:
               print("No last_run_date — continue")
@@ -62,13 +100,17 @@ jobs:
           except Exception as e:
               print("Bad last_run_date", raw, e)
               sys.exit(0)
+
           age = datetime.now(timezone.utc) - last.astimezone(timezone.utc)
           print(f"Last run: {last.isoformat()} age={age}")
-          if age < timedelta(hours=5):
-              print("SKIP: already posted within last 5 hours")
-              open("/tmp/skip_pipeline", "w").write("1")
+
+          # Tighter window on boost day so 3h cadence can fire
+          min_gap = timedelta(hours=2, minutes=45) if today == BOOST_DAY else timedelta(hours=5)
+          if age < min_gap:
+              mark_skip(f"already posted within {min_gap} (age={age})")
               sys.exit(0)
-          print("Continue: last post is old enough")
+
+          print("Continue: schedule gate passed")
           PY
 
       - name: Check skip marker
@@ -76,7 +118,7 @@ jobs:
         run: |
           if [ -f /tmp/skip_pipeline ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Pipeline skipped (recent post already exists)"
+            echo "Pipeline skipped"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -107,7 +149,6 @@ jobs:
       - name: Resolve content mode
         if: steps.gate.outputs.skip != 'true'
         run: |
-          # Scenic permanently disabled — always trend
           echo "CONTENT_MODE=trend" >> "$GITHUB_ENV"
           echo "Using CONTENT_MODE=trend (scenic disabled)"
 
